@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor directories
+.vscode/
+.idea/
