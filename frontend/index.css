@@ -1,0 +1,5 @@
+/* Intentionally left blank.
+   The app uses Tailwind via CDN in index.html.
+   This file exists to avoid /index.css 404s in dev/preview/build output. */
+
+
