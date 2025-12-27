@@ -244,13 +244,27 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         // Instructors: only poll lobby (and stats when active); skip session/me + active.
         if (user.role === ('INSTRUCTOR' as Role)) {
-          if (!roundId) return;
+          // If we don't yet know roundId (e.g., after page reload), fetch it via /session/me once.
+          let effectiveRoundId = roundId;
+          if (!effectiveRoundId) {
+            try {
+              const me = await sessionService.me();
+              if (!cancelled) {
+                effectiveRoundId = me.round_id;
+                setRoundId(me.round_id);
+              }
+            } catch {
+              // If we still don't have roundId, skip this cycle.
+              if (!effectiveRoundId) return;
+            }
+          }
+          if (!effectiveRoundId) return;
           try {
-            const rawLobby = await instructorService.lobby(roundId);
+            const rawLobby = await instructorService.lobby(effectiveRoundId);
             let stats: any = null;
             if (config.isActive) {
               try {
-                stats = await instructorService.stats(roundId);
+                stats = await instructorService.stats(effectiveRoundId);
               } catch {
                 // ignore stats failures when round not active or backend not ready
               }
@@ -265,7 +279,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               const unassignedArr: any[] = Array.isArray(data?.Unassigned ?? data?.unassigned) ? (data.Unassigned ?? data.unassigned) : [];
 
               const lobbyNormalized = {
-                round_id: data?.RoundID ?? data?.round_id ?? roundId,
+                round_id: data?.RoundID ?? data?.round_id ?? effectiveRoundId,
                 summary: {
                   waiting: data?.Summary?.Waiting ?? data?.summary?.waiting ?? 0,
                   assigned: data?.Summary?.Assigned ?? data?.summary?.assigned ?? 0,
@@ -365,7 +379,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return same ? prev : { ...prev, ...nextUser };
         });
 
-        const activeRound = active.round;
+        const activePayload: any = active as any;
+        const activeRound = (activePayload?.data?.round ?? active.round) as any;
         const roundNumber = activeRound?.round_number ?? 1;
         const normalizedStatus = normalizeRoundStatus(activeRound?.status) ?? 'CONFIGURED';
         const isActive = normalizedStatus === 'ACTIVE';
@@ -384,8 +399,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             round2BatchLimit: prev.round2BatchLimit ?? DEFAULT_ROUND2_BATCH_LIMIT,
           };
         });
-
-        // Team names endpoint removed; keep local defaults.
 
         // Role-specific data
         if (role === ('INSTRUCTOR' as Role)) {
@@ -465,13 +478,17 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         } else if (role === ('JOKE_MAKER' as Role) && me.assignment.team_id) {
           try {
-            const [summary, list] = await Promise.all([
+            const [summaryRaw, listRaw] = await Promise.all([
               jmService.teamSummary(me.round_id, me.assignment.team_id),
               jmService.listTeamBatches(me.round_id, me.assignment.team_id),
             ]);
             if (!cancelled) {
-              setTeamSummary(summary);
-              const mapped = list.batches.map(b =>
+              const summaryData: any = (summaryRaw as any)?.data ?? summaryRaw;
+              const listData: any = (listRaw as any)?.data ?? listRaw;
+              const batchesArr: any[] = Array.isArray(listData?.batches) ? listData.batches : [];
+
+              setTeamSummary(summaryData as any);
+              const mapped = batchesArr.map(b =>
                 mapBatchFromTeamList(
                   roundNumber,
                   me.assignment.team_id!,
