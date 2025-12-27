@@ -2,19 +2,79 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# Run and deploy your AI Studio app
+# The Joke Factory (Frontend)
 
-This contains everything you need to run your app locally.
+React + Vite frontend for **The Joke Factory** simulation.
 
-View your app in AI Studio: https://ai.studio/apps/drive/1r-BsgBJw83VCmXur78s-e6tTQFlSlh4U
+This repo supports:
+- **Local demo mode** (Mock API, no backend required)
+- **Local integration mode** (connect to your backend via `VITE_API_BASE_URL`)
+- **Netlify deployment** (works with Mock API by default, or can connect to a real backend)
 
-## Run Locally
+## Requirements
+- Node.js **20+** recommended (Vite 6 / React 19 ecosystem)
+- `npm` (or equivalent)
 
-**Prerequisites:**  Node.js
+## Install
+```bash
+npm install
+```
+
+## Run locally (Mock API demo)
+This is the easiest way to demo the full flow without any backend.
+
+1) Create `.env.local` in the project root:
+```bash
+VITE_USE_MOCK_API=true
+```
+
+2) Start the dev server:
+```bash
+npm run dev
+```
+
+3) Login:
+- **Instructor**: choose *Instructor Login* tab, password `123`
+- **Students**: use *Student Pair Login* (any names)
+
+If you get stuck due to old local sessions, clear these keys in DevTools → Application → Local Storage:
+- `joke_factory_user_id`
+- `joke_factory_display_name`
+- `joke_factory_mock_db_v1`
+
+## Run locally (connect to Backend)
+If you have a backend running, point the frontend to it with `VITE_API_BASE_URL`.
+
+1) Create `.env.local`:
+```bash
+# Example:
+VITE_API_BASE_URL=http://localhost:8080
+```
+
+2) Start the dev server:
+```bash
+npm run dev
+```
+
+### How to verify requests are hitting the backend
+- Open DevTools → Network, filter by `/v1/`
+- Confirm requests go to your backend host (not `localhost:3000`)
+- Backend should receive header `X-User-Id` once you’ve joined a session
+
+## Netlify deployment
+This repo includes `netlify.toml` and `public/_redirects`:
+- Publishes from `dist`
+- SPA routing fallback (no “Page not found” on refresh/deep links)
+- Sets `NODE_VERSION=20`
+
+### Deploy steps
+- In Netlify: **Build command** = `npm run build`
+- **Publish directory** = `dist`
+- **Base directory** = empty (repo root)
+
+### Environment variables (Netlify)
+- **(Optional) Connect to real backend**: set `VITE_API_BASE_URL`
+  - If set, the frontend will call your backend.
+  - If not set, the frontend will use the built-in **Mock API** automatically in production.
 
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
