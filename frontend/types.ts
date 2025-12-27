@@ -144,6 +144,16 @@ export interface ApiSessionMeResponse {
   assignment: { role: ApiRole | null; team_id: TeamId | null };
 }
 
+export interface ApiInstructorLoginRequest {
+  display_name: string;
+  password: string;
+}
+
+export interface ApiInstructorLoginResponse {
+  user: { user_id: UserId; display_name: string; role: 'INSTRUCTOR' };
+  round_id: RoundId;
+}
+
 export interface ApiActiveRoundResponse {
   round: {
     id: RoundId;

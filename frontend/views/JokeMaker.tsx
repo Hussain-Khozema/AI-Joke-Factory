@@ -1,26 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useGame } from '../context';
 import { Button, Card, StatBox, RoleLayout, Modal } from '../components';
-import { Plus, Trash2, Send, CheckCircle, AlertCircle, Users, MessageSquare } from 'lucide-react';
+import { Plus, Trash2, Send, CheckCircle, AlertCircle, MessageSquare } from 'lucide-react';
 import { Role, Batch } from '../types';
 
 const JokeMaker: React.FC = () => {
-  const { user, batches, addBatch, config, roster, teamSummary } = useGame();
+  const { user, batches, addBatch, config, teamSummary } = useGame();
   
   const [currentJokes, setCurrentJokes] = useState<string[]>([]);
   const [jokeInput, setJokeInput] = useState('');
   const [complianceChecked, setComplianceChecked] = useState(false);
   
-  // Local state for the popup
-  const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
-  
   // Feedback Modal State
   const [feedbackBatch, setFeedbackBatch] = useState<Batch | null>(null);
-
-  useEffect(() => {
-    // When instructor toggles, force the modal open or closed
-    setIsTeamModalOpen(config.showTeamPopup);
-  }, [config.showTeamPopup]);
 
   // 1. Stats (API-driven)
   const myBatches = batches.filter(b => b.team === user?.team);
@@ -66,36 +58,8 @@ const JokeMaker: React.FC = () => {
     return Object.entries(counts).sort(([,a], [,b]) => b - a);
   };
 
-  // Teammates Logic
-  const teammates = roster.filter(u => u.team === user?.team && u.id !== user?.id);
-
   return (
     <RoleLayout>
-      <Modal 
-        isOpen={isTeamModalOpen} 
-        onClose={() => setIsTeamModalOpen(false)} 
-        title="Meet Your Team"
-      >
-         <div className="text-center">
-            <div className="bg-blue-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-               <Users size={32} className="text-blue-600" />
-            </div>
-            <p className="text-gray-600 mb-6 font-medium text-lg">Round 2 requires collaboration.</p>
-            <div className="grid grid-cols-1 gap-2 text-left">
-               {teammates.map(member => (
-                  <div key={member.id} className="p-3 border rounded-lg flex justify-between items-center">
-                     <span className="font-bold text-gray-800">{member.name}</span>
-                     <span className={`text-xs px-2 py-1 rounded ${member.role === Role.JOKE_MAKER ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
-                        {member.role === Role.JOKE_MAKER ? 'Joke Maker' : 'Quality Control'}
-                     </span>
-                  </div>
-               ))}
-               {teammates.length === 0 && <p className="text-gray-400 italic">No other teammates found online.</p>}
-            </div>
-            <p className="mt-6 text-sm text-gray-400 animate-pulse">Waiting for instructor to start Round 2...</p>
-         </div>
-      </Modal>
-
       {/* QC Feedback Modal */}
       <Modal 
         isOpen={!!feedbackBatch} 

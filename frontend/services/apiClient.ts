@@ -21,7 +21,7 @@ type ApiClientOptions = Omit<RequestInit, 'body' | 'headers'> & {
 
 function getBaseUrl(): string {
   const envBase = (import.meta as any).env?.VITE_API_BASE_URL as string | undefined;
-  return (envBase && envBase.trim()) ? envBase : 'http://localhost:3000';
+  return (envBase && envBase.trim()) ? envBase : 'http://localhost:8081';
 }
 
 function getUserIdHeader(): string | undefined {

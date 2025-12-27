@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useGame } from '../context';
 import { Button, Card, StatBox, RoleLayout, Modal } from '../components';
-import { Star, CheckCircle, Clock, Users, Tag, AlertTriangle } from 'lucide-react';
-import { Batch, Role } from '../types';
+import { Star, CheckCircle, Clock, Tag, AlertTriangle } from 'lucide-react';
+import { Batch } from '../types';
 
 const TAG_OPTIONS = [
   { label: "Excellent / standout", tooltip: "Memorable, high-quality, clearly above average." },
@@ -16,7 +16,7 @@ const TAG_OPTIONS = [
 ];
 
 const QualityControl: React.FC = () => {
-  const { user, batches, rateBatch, config, roster, qcQueue } = useGame();
+  const { user, batches, rateBatch, config, qcQueue } = useGame();
   
   // API queue provides the next SUBMITTED batch; local state keeps rated history for this session.
   const pendingBatches: Batch[] = qcQueue ? [{
@@ -40,14 +40,6 @@ const QualityControl: React.FC = () => {
 
   const completedBatches = batches.filter(b => b.team === user?.team && b.status === 'RATED');
   
-  // Local state for the popup
-  const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
-
-  useEffect(() => {
-    // When instructor toggles, force the modal open or closed
-    setIsTeamModalOpen(config.showTeamPopup);
-  }, [config.showTeamPopup]);
-
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
   const [currentRatings, setCurrentRatings] = useState<{ [jokeId: string]: number }>({});
   const [currentTags, setCurrentTags] = useState<{ [jokeId: string]: string[] }>({});
@@ -96,36 +88,8 @@ const QualityControl: React.FC = () => {
     return allRated && allTagged && feedbackValid;
   };
 
-  // Teammates Logic
-  const teammates = roster.filter(u => u.team === user?.team && u.id !== user?.id);
-
   return (
     <RoleLayout>
-       <Modal 
-         isOpen={isTeamModalOpen} 
-         onClose={() => setIsTeamModalOpen(false)} 
-         title="Meet Your Team"
-       >
-         <div className="text-center">
-            <div className="bg-purple-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-               <Users size={32} className="text-purple-600" />
-            </div>
-            <p className="text-gray-600 mb-6 font-medium text-lg">Round 2 requires collaboration.</p>
-            <div className="grid grid-cols-1 gap-2 text-left">
-               {teammates.map(member => (
-                  <div key={member.id} className="p-3 border rounded-lg flex justify-between items-center">
-                     <span className="font-bold text-gray-800">{member.name}</span>
-                     <span className={`text-xs px-2 py-1 rounded ${member.role === Role.JOKE_MAKER ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
-                        {member.role === Role.JOKE_MAKER ? 'Joke Maker' : 'Quality Control'}
-                     </span>
-                  </div>
-               ))}
-               {teammates.length === 0 && <p className="text-gray-400 italic">No other teammates found online.</p>}
-            </div>
-            <p className="mt-6 text-sm text-gray-400 animate-pulse">Waiting for instructor to start Round 2...</p>
-         </div>
-      </Modal>
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
         {/* Left Column: Queue & Active Rating */}

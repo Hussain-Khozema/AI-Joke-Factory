@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type {
   ApiInstructorLobbyResponse,
   ApiInstructorStatsResponse,
@@ -125,6 +125,7 @@ interface GameContextType {
   user: User | null;
   roster: User[]; // Instructor: lobby; JM/QC: teammates
   login: (name: string, role: Role) => Promise<void>;
+  instructorLogin: (displayName: string, password: string) => Promise<void>;
   logout: () => void;
   
   config: GameConfig;
@@ -193,6 +194,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Local caches to preserve UI that expects joke text (API does not return it for batch history).
   const submittedBatchJokesRef = useRef<Record<string, string[]>>({});
   const qcRatedHistoryRef = useRef<Record<string, Batch>>({});
+
+  // Polling controls
+  const pollAbortRef = useRef<AbortController | null>(null);
+  const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   
   const [config, setConfig] = useState<GameConfig>({
     status: 'LOBBY', // Start in LOBBY to show setup screen
@@ -219,25 +224,117 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Professional polling: /v1/session/me + /v1/rounds/active (+ role-specific data)
   useEffect(() => {
-    const storedUserId = localStorage.getItem(LS_USER_ID);
-    if (!storedUserId) return;
+    // Start polling only when a user is present (after login/join).
+    if (!user) {
+      // ensure no timers are running
+      pollAbortRef.current?.abort();
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      return;
+    }
 
     let cancelled = false;
-    let pollTimer: ReturnType<typeof setInterval> | undefined;
-    const abortRef = { current: null as AbortController | null };
 
     const poll = async () => {
-      abortRef.current?.abort();
-      abortRef.current = new AbortController();
+      pollAbortRef.current?.abort();
+      pollAbortRef.current = new AbortController();
 
       try {
+        // Instructors: only poll lobby (and stats when active); skip session/me + active.
+        if (user.role === ('INSTRUCTOR' as Role)) {
+          if (!roundId) return;
+          try {
+            const rawLobby = await instructorService.lobby(roundId);
+            let stats: any = null;
+            if (config.isActive) {
+              try {
+                stats = await instructorService.stats(roundId);
+              } catch {
+                // ignore stats failures when round not active or backend not ready
+              }
+            }
+
+            if (!cancelled) {
+              const lobbyAny: any = rawLobby;
+              const data = lobbyAny?.data ?? lobbyAny;
+
+              const teamsArr: any[] = Array.isArray(data?.Teams ?? data?.teams) ? (data.Teams ?? data.teams) : [];
+              const customersArr: any[] = Array.isArray(data?.Customers ?? data?.customers) ? (data.Customers ?? data.customers) : [];
+              const unassignedArr: any[] = Array.isArray(data?.Unassigned ?? data?.unassigned) ? (data.Unassigned ?? data.unassigned) : [];
+
+              const lobbyNormalized = {
+                round_id: data?.RoundID ?? data?.round_id ?? roundId,
+                summary: {
+                  waiting: data?.Summary?.Waiting ?? data?.summary?.waiting ?? 0,
+                  assigned: data?.Summary?.Assigned ?? data?.summary?.assigned ?? 0,
+                  dropped: data?.Summary?.Dropped ?? data?.summary?.dropped ?? 0,
+                  team_count: data?.Summary?.TeamCount ?? data?.summary?.team_count ?? teamsArr.length,
+                  customer_count: data?.Summary?.CustomerCount ?? data?.summary?.customer_count ?? customersArr.length,
+                },
+                teams: teamsArr.map(t => {
+                  const members = Array.isArray(t.Members ?? t.members) ? (t.Members ?? t.members) : [];
+                  const team = t.Team ?? t.team ?? {};
+                  const teamId = team.ID ?? team.Id ?? team.id ?? t.TeamID ?? t.team_id;
+                  const teamName = team.Name ?? team.name ?? `Team ${teamId ?? ''}`;
+                  return {
+                    team: { id: Number(teamId) as TeamId, name: String(teamName) },
+                    members: members.map(m => ({
+                      user_id: Number(m.UserID ?? m.user_id) as UserId,
+                      display_name: String(m.DisplayName ?? m.display_name ?? ''),
+                      role: m.Role ?? m.role ?? null,
+                    })),
+                  };
+                }),
+                customers: customersArr.map(c => ({
+                  user_id: Number(c.UserID ?? c.user_id) as UserId,
+                  display_name: String(c.DisplayName ?? c.display_name ?? ''),
+                  role: c.Role ?? c.role ?? 'CUSTOMER',
+                })),
+                unassigned: unassignedArr.map(u => ({
+                  user_id: Number(u.UserID ?? u.user_id) as UserId,
+                  display_name: String(u.DisplayName ?? u.display_name ?? ''),
+                  status: u.Status ?? u.status ?? 'WAITING',
+                })),
+              };
+
+              setInstructorLobby(lobbyNormalized as any);
+              if (stats) setInstructorStats(stats as any);
+
+              // Build roster for instructor drag/drop (teams + customers + unassigned)
+              const rosterUsers: User[] = [];
+              lobbyNormalized.teams.forEach(t => {
+                t.members.forEach(m => {
+                  rosterUsers.push(makeUser({ user_id: m.user_id, display_name: m.display_name }, toRole(m.role), t.team.id));
+                });
+              });
+              lobbyNormalized.customers.forEach(c => {
+                rosterUsers.push(makeUser({ user_id: c.user_id, display_name: c.display_name }, 'CUSTOMER' as Role, null));
+              });
+              lobbyNormalized.unassigned.forEach(u => {
+                rosterUsers.push(makeUser({ user_id: u.user_id, display_name: u.display_name }, 'UNASSIGNED' as Role, null));
+              });
+              setRoster(rosterUsers);
+            }
+          } catch {
+            // ignore; instructor endpoints will surface errors on action
+          }
+          return;
+        }
+
         const [me, active] = await Promise.all([sessionService.me(), sessionService.activeRound()]);
         if (cancelled) return;
 
         setRoundId(me.round_id);
 
-        const role = toRole(me.assignment.role);
-        const nextUser = makeUser(me.user, role, me.assignment.team_id);
+        let role = toRole(me.assignment.role);
+        // Only demote to UNASSIGNED when participant is waiting and not an instructor.
+        if (role !== ('INSTRUCTOR' as Role) && me.participant?.status === 'WAITING') {
+          role = 'UNASSIGNED' as Role;
+        }
+        const teamId = role === ('UNASSIGNED' as Role) ? null : me.assignment.team_id;
+        const nextUser = makeUser(me.user, role, teamId);
 
         // Customer-only: hydrate wallet/purchases from budget + market.
         if (role === ('CUSTOMER' as Role)) {
@@ -288,42 +385,77 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           };
         });
 
-        // Team names from /v1/teams (best-effort, infrequent but cheap)
-        try {
-          const t = await sessionService.getTeams();
-          if (!cancelled) {
-            const next = { ...INITIAL_TEAM_NAMES };
-            t.teams.forEach(team => {
-              next[String(team.id)] = team.name;
-            });
-            setTeamNames(next);
-          }
-        } catch {
-          // ignore
-        }
+        // Team names endpoint removed; keep local defaults.
 
         // Role-specific data
         if (role === ('INSTRUCTOR' as Role)) {
           try {
-            const [lobby, stats] = await Promise.all([
-              instructorService.lobby(me.round_id),
-              instructorService.stats(me.round_id),
-            ]);
+            const rawLobby = await instructorService.lobby(me.round_id);
+            let stats: any = null;
+            if (config.isActive) {
+              try {
+                stats = await instructorService.stats(me.round_id);
+              } catch {
+                // ignore stats failures; keep lobby data
+              }
+            }
             if (!cancelled) {
-              setInstructorLobby(lobby);
-              setInstructorStats(stats);
+              const lobbyAny: any = rawLobby;
+              const data = lobbyAny?.data ?? lobbyAny;
+
+              const teamsArr: any[] = Array.isArray(data?.Teams ?? data?.teams) ? (data.Teams ?? data.teams) : [];
+              const customersArr: any[] = Array.isArray(data?.Customers ?? data?.customers) ? (data.Customers ?? data.customers) : [];
+              const unassignedArr: any[] = Array.isArray(data?.Unassigned ?? data?.unassigned) ? (data.Unassigned ?? data.unassigned) : [];
+
+              const lobbyNormalized = {
+                round_id: data?.RoundID ?? data?.round_id ?? me.round_id,
+                summary: {
+                  waiting: data?.Summary?.Waiting ?? data?.summary?.waiting ?? 0,
+                  assigned: data?.Summary?.Assigned ?? data?.summary?.assigned ?? 0,
+                  dropped: data?.Summary?.Dropped ?? data?.summary?.dropped ?? 0,
+                  team_count: data?.Summary?.TeamCount ?? data?.summary?.team_count ?? teamsArr.length,
+                  customer_count: data?.Summary?.CustomerCount ?? data?.summary?.customer_count ?? customersArr.length,
+                },
+                teams: teamsArr.map(t => {
+                  const members = Array.isArray(t.Members ?? t.members) ? (t.Members ?? t.members) : [];
+                  const team = t.Team ?? t.team ?? {};
+                  const teamId = team.ID ?? team.Id ?? team.id ?? t.TeamID ?? t.team_id;
+                  const teamName = team.Name ?? team.name ?? `Team ${teamId ?? ''}`;
+                  return {
+                    team: { id: Number(teamId) as TeamId, name: String(teamName) },
+                    members: members.map(m => ({
+                      user_id: Number(m.UserID ?? m.user_id) as UserId,
+                      display_name: String(m.DisplayName ?? m.display_name ?? ''),
+                      role: m.Role ?? m.role ?? null,
+                    })),
+                  };
+                }),
+                customers: customersArr.map(c => ({
+                  user_id: Number(c.UserID ?? c.user_id) as UserId,
+                  display_name: String(c.DisplayName ?? c.display_name ?? ''),
+                  role: c.Role ?? c.role ?? 'CUSTOMER',
+                })),
+                unassigned: unassignedArr.map(u => ({
+                  user_id: Number(u.UserID ?? u.user_id) as UserId,
+                  display_name: String(u.DisplayName ?? u.display_name ?? ''),
+                  status: u.Status ?? u.status ?? 'WAITING',
+                })),
+              };
+
+              setInstructorLobby(lobbyNormalized as any);
+              if (stats) setInstructorStats(stats as any);
 
               // Build roster for instructor drag/drop (teams + customers + unassigned)
               const rosterUsers: User[] = [];
-              lobby.teams.forEach(t => {
+              lobbyNormalized.teams.forEach(t => {
                 t.members.forEach(m => {
                   rosterUsers.push(makeUser({ user_id: m.user_id, display_name: m.display_name }, toRole(m.role), t.team.id));
                 });
               });
-              lobby.customers.forEach(c => {
+              lobbyNormalized.customers.forEach(c => {
                 rosterUsers.push(makeUser({ user_id: c.user_id, display_name: c.display_name }, 'CUSTOMER' as Role, null));
               });
-              lobby.unassigned.forEach(u => {
+              lobbyNormalized.unassigned.forEach(u => {
                 rosterUsers.push(makeUser({ user_id: u.user_id, display_name: u.display_name }, 'UNASSIGNED' as Role, null));
               });
               setRoster(rosterUsers);
@@ -348,36 +480,19 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 ),
               );
               // Merge QC-rated history (if any) so JM can still see feedback in same session.
-              const qcExtra = Object.values(qcRatedHistoryRef.current).filter(b => b.team_id === me.assignment.team_id);
-              const merged = [...mapped, ...qcExtra].reduce<Record<string, Batch>>((acc, b) => {
+              const qcExtra = Object.values(qcRatedHistoryRef.current).filter((b: Batch) => b.team_id === me.assignment.team_id);
+              const merged = [...mapped, ...qcExtra].reduce<Record<string, Batch>>((acc, b: Batch) => {
                 acc[String(b.batch_id)] = b;
                 return acc;
-              }, {});
+              }, {} as Record<string, Batch>);
               setBatches(Object.values(merged).sort((a, b) => (a.batch_id - b.batch_id)));
             }
           } catch {
             // ignore; action will surface
           }
 
-          // teammate roster (best-effort)
-          try {
-            const resp: any = await sessionService.myTeam(me.round_id);
-            if (!cancelled) {
-              const members = Array.isArray(resp?.members) ? resp.members : [];
-              const rosterUsers: User[] = members.map((m: any) =>
-                makeUser(
-                  { user_id: Number(m.user_id) as UserId, display_name: String(m.display_name ?? m.name ?? '') },
-                  toRole(m.role ?? null),
-                  (m.team_id ?? me.assignment.team_id) as TeamId,
-                ),
-              );
-              // ensure self exists in list
-              if (!rosterUsers.some(u => u.user_id === nextUser.user_id)) rosterUsers.push(nextUser);
-              setRoster(rosterUsers);
-            }
-          } catch {
-            // ok
-          }
+          // teammates modal removed; keep roster minimal (self only)
+          setRoster([nextUser]);
         } else if (role === ('QUALITY_CONTROL' as Role)) {
           // QC queue (live work)
           try {
@@ -387,24 +502,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (!cancelled) setQcQueue(null);
           }
 
-          // teammate roster (best-effort)
-          try {
-            const resp: any = await sessionService.myTeam(me.round_id);
-            if (!cancelled) {
-              const members = Array.isArray(resp?.members) ? resp.members : [];
-              const rosterUsers: User[] = members.map((m: any) =>
-                makeUser(
-                  { user_id: Number(m.user_id) as UserId, display_name: String(m.display_name ?? m.name ?? '') },
-                  toRole(m.role ?? null),
-                  (m.team_id ?? null) as TeamId,
-                ),
-              );
-              if (!rosterUsers.some(u => u.user_id === nextUser.user_id)) rosterUsers.push(nextUser);
-              setRoster(rosterUsers);
-            }
-          } catch {
-            // ok
-          }
+          setRoster([nextUser]);
 
           // Keep local rated history visible in QC UI (no API endpoint for history provided).
           if (!cancelled) {
@@ -412,20 +510,28 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setBatches(hist);
           }
         }
-      } catch {
-        // If session/me fails (e.g. invalid user), we don't auto-logout; user can reload/login again.
+      } catch (e) {
+        // If session/me fails because user is not found, clear session so user can re-join lobby.
+        if (e instanceof ApiError && e.status === 404) {
+          logout();
+          return;
+        }
+        // Otherwise ignore transient errors; user can retry.
       }
     };
 
     poll();
-    pollTimer = setInterval(poll, 1500);
+    pollTimerRef.current = setInterval(poll, 1500);
 
     return () => {
       cancelled = true;
-      abortRef.current?.abort();
-      if (pollTimer) clearInterval(pollTimer);
+      pollAbortRef.current?.abort();
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
     };
-  }, []);
+  }, [user?.user_id, user?.role, roundId]);
 
   // Timer Logic
   useEffect(() => {
@@ -458,7 +564,43 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const instructorLogin = async (displayName: string, password: string) => {
+    const display_name = displayName.trim();
+    if (!display_name || !password.trim()) return;
+    try {
+      const resp = await instructorService.login({ display_name, password });
+      localStorage.setItem(LS_USER_ID, String(resp.user.user_id));
+      localStorage.setItem(LS_DISPLAY_NAME, resp.user.display_name);
+      const next = makeUser(
+        { user_id: resp.user.user_id as UserId, display_name: resp.user.display_name },
+        'INSTRUCTOR' as Role,
+        null,
+      );
+      setUser(next);
+      setRoundId(resp.round_id);
+    } catch (e) {
+      if (e instanceof ApiError) {
+        if (e.status === 401) {
+          alert('Incorrect password or instructor access not configured.');
+          return;
+        }
+        if (e.status === 400) {
+          alert('Invalid login payload.');
+          return;
+        }
+      }
+      alert('Failed to login as instructor.');
+    }
+  };
+
   const logout = () => {
+    // stop polling immediately
+    pollAbortRef.current?.abort();
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+
     setUser(null);
     localStorage.removeItem(LS_USER_ID);
     localStorage.removeItem(LS_DISPLAY_NAME);
@@ -474,18 +616,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const updateConfig = async (updates: Partial<GameConfig>) => {
     setConfig(prev => ({ ...prev, ...updates }));
-    // Only instructor config is persisted via API (customer_budget, batch_size).
-    if (!roundId) return;
-    if (!user || user.role !== ('INSTRUCTOR' as Role)) return;
-
-    const nextBudget = updates.customerBudget ?? config.customerBudget;
-    const nextBatch = updates.round1BatchSize ?? config.round1BatchSize;
-    try {
-      await instructorService.updateConfig(roundId, { customer_budget: nextBudget, batch_size: nextBatch });
-    } catch {
-      // config will re-sync on next poll; keep UI responsive
-      alert('Failed to update round config.');
-    }
+    // No server-side config endpoint; values are sent when starting the round.
   };
 
   // --- LOBBY & TEAM FORMATION LOGIC ---
@@ -517,63 +648,19 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!roundId) return;
     if (!user || user.role !== ('INSTRUCTOR' as Role)) return;
 
-    // Use current roster (from instructor lobby poll) and assign deterministically.
-    const allPairs = roster.filter(u => u.role !== ('INSTRUCTOR' as Role));
-    const shuffle = (arr: any[]) => arr.sort(() => Math.random() - 0.5);
-    const shuffled = shuffle([...allPairs]);
-    const customers = shuffled.slice(0, customerCount);
-    const remaining = shuffled.slice(customerCount);
-
-    const half = remaining.length / 2;
-    const jms = remaining.slice(0, half);
-    const qcs = remaining.slice(half);
-
-    let teamsResp: { teams: Team[] } | null = null;
-    try {
-      teamsResp = await sessionService.getTeams();
-    } catch {
-      alert('Unable to fetch teams from server.');
-      return;
-    }
-
-    const neededTeams = jms.length;
-    const availableTeams = teamsResp.teams;
-    if (availableTeams.length < neededTeams) {
-      alert(`Not enough teams in backend. Need ${neededTeams}, found ${availableTeams.length}.`);
+    // Delegate auto-assignment to backend.
+    const productionPairs = roster.filter(u => u.role !== ('INSTRUCTOR' as Role)).length - customerCount;
+    const teamCount = productionPairs / 2;
+    if (teamCount <= 0 || !Number.isInteger(teamCount)) {
+      alert('Invalid team count. Please check participant numbers.');
       return;
     }
 
     try {
-      // Assign customers
-      await Promise.all(
-        customers.map(u =>
-          instructorService.patchUser(roundId, u.user_id, { status: 'ASSIGNED', role: 'CUSTOMER', team_id: null }),
-        ),
-      );
-
-      // Assign JM/QC per team
-      await Promise.all(
-        jms.map((jm, i) =>
-          instructorService.patchUser(roundId, jm.user_id, {
-            status: 'ASSIGNED',
-            role: 'JM',
-            team_id: availableTeams[i].id,
-          }),
-        ),
-      );
-      await Promise.all(
-        qcs.map((qc, i) =>
-          instructorService.patchUser(roundId, qc.user_id, {
-            status: 'ASSIGNED',
-            role: 'QC',
-            team_id: availableTeams[i].id,
-          }),
-        ),
-      );
-
+      await instructorService.autoAssign(roundId, { customer_count: customerCount, team_count: teamCount });
       await updateConfig({ status: 'PLAYING' });
     } catch {
-      alert('Failed to assign teams. Please try again.');
+      alert('Failed to auto-assign teams. Please try again.');
     }
   };
 
@@ -836,7 +923,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     try {
-      if (isActive) await instructorService.start(roundId);
+      if (isActive) {
+        await instructorService.start(roundId, {
+          customer_budget: config.customerBudget,
+          batch_size: config.round1BatchSize,
+        });
+      }
       setConfig(prev => ({ ...prev, isActive }));
     } catch {
       alert('Failed to start round.');
@@ -866,7 +958,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   return (
     <GameContext.Provider value={{
-      user, login, logout, roster,
+      user, login, instructorLogin, logout, roster,
       config, updateConfig, setRound, setGameActive, endRound, resetGame, toggleTeamPopup,
       calculateValidCustomerOptions, formTeams, resetToLobby,
       teamNames, updateTeamName, updateUser,

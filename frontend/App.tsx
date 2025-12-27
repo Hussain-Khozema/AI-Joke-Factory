@@ -75,9 +75,10 @@ const DebugPanel: React.FC = () => {
 };
 
 const LoginScreen: React.FC = () => {
-  const { login } = useGame();
+  const { login, instructorLogin } = useGame();
   const [name, setName] = useState('');
   const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
   const [activeTab, setActiveTab] = useState<'STUDENT' | 'INSTRUCTOR'>('STUDENT');
 
   const handleStudentLogin = async (e: React.FormEvent) => {
@@ -90,18 +91,7 @@ const LoginScreen: React.FC = () => {
 
   const handleInstructorLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Backend assigns INSTRUCTOR based on display_name; keep existing UI, map password to instructor display_name.
-    const instructorDisplayName =
-      password === '123' ? 'Charles2026'
-      : password === 'Charles2026' ? 'Charles2026'
-      : password === 'Fernanda2026' ? 'Fernanda2026'
-      : null;
-
-    if (instructorDisplayName) {
-      await login(instructorDisplayName, Role.INSTRUCTOR);
-    } else {
-      alert('Incorrect Password');
-    }
+    await instructorLogin(displayName, password);
   };
 
   return (
@@ -154,6 +144,17 @@ const LoginScreen: React.FC = () => {
             </form>
           ) : (
             <form onSubmit={handleInstructorLogin} className="space-y-6">
+              <div>
+                <label className="block text-sm font-semibold text-gray-900 mb-2">Display Name</label>
+                <input 
+                  required
+                  type="text" 
+                  className="w-full bg-white border border-gray-300 rounded-lg px-4 py-2.5 text-gray-900 focus:ring-2 focus:ring-blue-600 focus:border-blue-600 outline-none transition-all"
+                  value={displayName}
+                  onChange={e => setDisplayName(e.target.value)}
+                  placeholder="professor_1"
+                />
+              </div>
               <div>
                 <label className="block text-sm font-semibold text-gray-900 mb-2">Admin Password</label>
                 <input 

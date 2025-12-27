@@ -1,0 +1,364 @@
+{
+	"info": {
+		"_postman_id": "adbe0f4c-c109-493a-a34e-cd6dfd5ad666",
+		"name": "New Collection",
+		"schema": "https://schema.getpostman.com/json/collection/v2.0.0/collection.json",
+		"_exporter_id": "21658999",
+		"_collection_link": "https://ai-joke-maker.postman.co/workspace/ce56844d-cb96-4d3f-a49f-4fc1fe07fff4/collection/21658999-adbe0f4c-c109-493a-a34e-cd6dfd5ad666?action=share&source=collection_link&creator=21658999"
+	},
+	"item": [
+		{
+			"name": "User Join Session",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\"display_name\":\"hussain\"}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "{{baseURL}}/v1/session/join",
+				"description": "Generated from cURL: curl -i -X POST http://localhost:8081/v1/session/join \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"display_name\":\"alice\"}'"
+			},
+			"response": []
+		},
+		{
+			"name": "User Get Session Details",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-User-Id",
+						"value": "2"
+					}
+				],
+				"url": "{{baseURL}}/v1/session/me",
+				"description": "Generated from cURL: curl -i http://localhost:8081/v1/session/me \\\n  -H 'X-User-Id: <user_id>'"
+			},
+			"response": []
+		},
+		{
+			"name": "User check if round active",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": "{{baseURL}}/v1/rounds/active",
+				"description": "Generated from cURL: curl -i http://localhost:8081/v1/rounds/active\n"
+			},
+			"response": []
+		},
+		{
+			"name": "User Get Team Summary",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": "{{baseURL}}/v1/rounds/<round_id>/teams/<team_id>/summary",
+				"description": "Generated from cURL: curl -i http://localhost:8081/v1/rounds/<round_id>/teams/<team_id>/summary"
+			},
+			"response": []
+		},
+		{
+			"name": "JM Submit Batch",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					},
+					{
+						"key": "X-User-Id",
+						"value": "<jm_user_id>"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\"team_id\": <team_id>, \"jokes\": [\"Why did...\", \"I told...\", \"Parallel...\", \"My boss...\", \"I used to...\"]}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "{{baseURL}}/v1/rounds/<round_id>/batches",
+				"description": "Generated from cURL: curl -i -X POST http://localhost:8081/v1/rounds/<round_id>/batches \\\n  -H 'Content-Type: application/json' \\\n  -H 'X-User-Id: <jm_user_id>' \\\n  -d '{\"team_id\": <team_id>, \"jokes\": [\"Why did...\", \"I told...\", \"Parallel...\", \"My boss...\", \"I used to...\"]}'\n"
+			},
+			"response": []
+		},
+		{
+			"name": "List Team batches (JM/QC)",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-User-Id",
+						"value": "<jm_or_qc_user_id>"
+					}
+				],
+				"url": "{{baseURL}}/v1/rounds/<round_id>/teams/<team_id>/batches",
+				"description": "Generated from cURL: curl -i http://localhost:8081/v1/rounds/<round_id>/teams/<team_id>/batches \\\n  -H 'X-User-Id: <jm_or_qc_user_id>'"
+			},
+			"response": []
+		},
+		{
+			"name": "Get Next unrated batch (QC)",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-User-Id",
+						"value": "<qc_user_id>"
+					}
+				],
+				"url": {
+					"raw": "{{baseURL}}/v1/qc/queue/next?round_id=<round_id>",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"v1",
+						"qc",
+						"queue",
+						"next"
+					],
+					"query": [
+						{
+							"key": "round_id",
+							"value": "<round_id>"
+						}
+					]
+				},
+				"description": "Generated from cURL: curl -i \"http://localhost:8081/v1/qc/queue/next?round_id=<round_id>\" \\\n  -H 'X-User-Id: <qc_user_id>'"
+			},
+			"response": []
+		},
+		{
+			"name": "Submit Joke Ratings (QC)",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					},
+					{
+						"key": "X-User-Id",
+						"value": "<qc_user_id>"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"ratings\": [\n        {\n            \"joke_id\": 9101,\n            \"rating\": 5\n        },\n        {\n            \"joke_id\": 9102,\n            \"rating\": 4\n        },\n        {\n            \"joke_id\": 9103,\n            \"rating\": 5\n        },\n        {\n            \"joke_id\": 9104,\n            \"rating\": 3\n        },\n        {\n            \"joke_id\": 9105,\n            \"rating\": 4\n        }\n    ]\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "{{baseURL}}/v1/qc/batches/<batch_id>/ratings",
+				"description": "Generated from cURL: curl -i -X POST http://localhost:8081/v1/qc/batches/<batch_id>/ratings \\\n  -H 'Content-Type: application/json' \\\n  -H 'X-User-Id: <qc_user_id>' \\\n  -d '{\"ratings\":[{\"joke_id\":9101,\"rating\":5},{\"joke_id\":9102,\"rating\":4},{\"joke_id\":9103,\"rating\":5},{\"joke_id\":9104,\"rating\":3},{\"joke_id\":9105,\"rating\":4}]}'\n"
+			},
+			"response": []
+		},
+		{
+			"name": "Get Queue Size (QC)",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/v1/qc/queue/count?round_id=<round_id>",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"v1",
+						"qc",
+						"queue",
+						"count"
+					],
+					"query": [
+						{
+							"key": "round_id",
+							"value": "<round_id>"
+						}
+					]
+				},
+				"description": "Generated from cURL: curl -i \"http://localhost:8081/v1/qc/queue/count?round_id=<round_id>\""
+			},
+			"response": []
+		},
+		{
+			"name": "Get Jokes in Market (Customer)",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-User-Id",
+						"value": "<customer_user_id>"
+					}
+				],
+				"url": "http://localhost:8081/v1/rounds/<round_id>/market",
+				"description": "Generated from cURL: curl -i http://localhost:8081/v1/rounds/<round_id>/market \\\n  -H 'X-User-Id: <customer_user_id>'"
+			},
+			"response": []
+		},
+		{
+			"name": "Get Customer Budget",
+			"request": {
+				"method": "GET",
+				"header": [
+					{
+						"key": "X-User-Id",
+						"value": "<customer_user_id>"
+					}
+				],
+				"url": "http://localhost:8081/v1/rounds/<round_id>/customers/budget",
+				"description": "Generated from cURL: curl -i http://localhost:8081/v1/rounds/<round_id>/customers/budget \\\n  -H 'X-User-Id: <customer_user_id>'"
+			},
+			"response": []
+		},
+		{
+			"name": "Buy Joke",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-User-Id",
+						"value": "<customer_user_id>"
+					}
+				],
+				"url": "http://localhost:8081/v1/rounds/<round_id>/market/<joke_id>/buy",
+				"description": "Generated from cURL: curl -i -X POST http://localhost:8081/v1/rounds/<round_id>/market/<joke_id>/buy \\\n  -H 'X-User-Id: <customer_user_id>'\n"
+			},
+			"response": []
+		},
+		{
+			"name": "Return Joke",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "X-User-Id",
+						"value": "<customer_user_id>"
+					}
+				],
+				"url": "http://localhost:8081/v1/rounds/<round_id>/market/<joke_id>/return",
+				"description": "Generated from cURL: curl -i -X POST http://localhost:8081/v1/rounds/<round_id>/market/<joke_id>/return \\\n  -H 'X-User-Id: <customer_user_id>'"
+			},
+			"response": []
+		},
+		{
+			"name": "Instructor Lobby",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": "http://localhost:8081/v1/instructor/rounds/<round_id>/lobby",
+				"description": "Generated from cURL: curl -i http://localhost:8081/v1/instructor/rounds/<round_id>/lobby"
+			},
+			"response": []
+		},
+		{
+			"name": "Instructor Auto Assign Users to Teams",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\"customer_count\":2,\"team_count\":3}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "http://localhost:8081/v1/instructor/rounds/<round_id>/assign",
+				"description": "Generated from cURL: curl -i -X POST http://localhost:8081/v1/instructor/rounds/<round_id>/assign \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"customer_count\":2,\"team_count\":3}'"
+			},
+			"response": []
+		},
+		{
+			"name": "Instructor update user status/team",
+			"request": {
+				"method": "PATCH",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\"status\":\"ASSIGNED\",\"role\":\"JM\",\"team_id\":1}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "http://localhost:8081/v1/instructor/rounds/<round_id>/users/<user_id>",
+				"description": "Generated from cURL: curl -i -X PATCH http://localhost:8081/v1/instructor/rounds/<round_id>/users/<user_id> \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"status\":\"ASSIGNED\",\"role\":\"JM\",\"team_id\":1}'"
+			},
+			"response": []
+		},
+		{
+			"name": "Instructor Start Round",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "raw",
+					"raw": "{\n    \"customer_budget\": 10,\n    \"batch_size\": 5\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": "http://localhost:8081/v1/instructor/rounds/<round_id>/start",
+				"description": "Generated from cURL: curl -i -X POST http://localhost:8081/v1/instructor/rounds/<round_id>/start\n"
+			},
+			"response": []
+		},
+		{
+			"name": "Instructor End Round",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"url": "http://localhost:8081/v1/instructor/rounds/<round_id>/end",
+				"description": "Generated from cURL: curl -i -X POST http://localhost:8081/v1/instructor/rounds/<round_id>/end\n"
+			},
+			"response": []
+		},
+		{
+			"name": "Instructor Round Stats",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": "http://localhost:8081/v1/instructor/rounds/<round_id>/stats",
+				"description": "Generated from cURL: curl -i http://localhost:8081/v1/instructor/rounds/<round_id>/stats"
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "baseURL",
+			"value": "",
+			"type": "default"
+		}
+	]
+}

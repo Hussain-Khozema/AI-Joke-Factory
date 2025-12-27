@@ -2,12 +2,18 @@ import { apiRequest } from './apiClient';
 import type {
   ApiInstructorLobbyResponse,
   ApiInstructorStatsResponse,
+  ApiInstructorLoginRequest,
+  ApiInstructorLoginResponse,
   RoundId,
   TeamId,
   UserId,
 } from '../types';
 
 export const instructorService = {
+  login(body: ApiInstructorLoginRequest): Promise<ApiInstructorLoginResponse> {
+    return apiRequest<ApiInstructorLoginResponse>('/v1/instructor/login', { method: 'POST', body });
+  },
+
   lobby(round_id: RoundId): Promise<ApiInstructorLobbyResponse> {
     return apiRequest<ApiInstructorLobbyResponse>(`/v1/instructor/rounds/${round_id}/lobby`, { method: 'GET' });
   },
@@ -16,12 +22,8 @@ export const instructorService = {
     return apiRequest<ApiInstructorStatsResponse>(`/v1/instructor/rounds/${round_id}/stats`, { method: 'GET' });
   },
 
-  updateConfig(round_id: RoundId, body: { customer_budget: number; batch_size: number }): Promise<void> {
-    return apiRequest<void>(`/v1/instructor/rounds/${round_id}/config`, { method: 'PUT', body });
-  },
-
-  autoAssign(round_id: RoundId): Promise<void> {
-    return apiRequest<void>(`/v1/instructor/rounds/${round_id}/assign`, { method: 'POST' });
+  autoAssign(round_id: RoundId, body: { customer_count: number; team_count: number }): Promise<void> {
+    return apiRequest<void>(`/v1/instructor/rounds/${round_id}/assign`, { method: 'POST', body });
   },
 
   patchUser(
@@ -32,8 +34,8 @@ export const instructorService = {
     return apiRequest<void>(`/v1/instructor/rounds/${round_id}/users/${user_id}`, { method: 'PATCH', body });
   },
 
-  start(round_id: RoundId): Promise<void> {
-    return apiRequest<void>(`/v1/instructor/rounds/${round_id}/start`, { method: 'POST' });
+  start(round_id: RoundId, body: { customer_budget: number; batch_size: number }): Promise<void> {
+    return apiRequest<void>(`/v1/instructor/rounds/${round_id}/start`, { method: 'POST', body });
   },
 
   end(round_id: RoundId): Promise<void> {

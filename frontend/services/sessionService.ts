@@ -9,10 +9,6 @@ import type {
 } from '../types';
 
 export const sessionService = {
-  getTeams(): Promise<ApiTeamsResponse> {
-    return apiRequest<ApiTeamsResponse>('/v1/teams', { method: 'GET' });
-  },
-
   join(body: ApiSessionJoinRequest): Promise<ApiSessionJoinResponse> {
     return apiRequest<ApiSessionJoinResponse>('/v1/session/join', { method: 'POST', body });
   },
