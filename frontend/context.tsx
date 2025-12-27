@@ -24,6 +24,7 @@ import { qcService } from './services/qcService';
 import { customerService } from './services/customerService';
 import { sessionService } from './services/sessionService';
 import { ApiError } from './services/apiClient';
+import { setMockRoundNumber } from './services/mockApi';
 
 const LS_USER_ID = 'joke_factory_user_id';
 const LS_DISPLAY_NAME = 'joke_factory_display_name';
@@ -32,10 +33,18 @@ const DEFAULT_ROUND2_BATCH_LIMIT = 6;
 
 // Helper to init team names (fallback, will be replaced by /v1/teams where possible)
 const INITIAL_TEAM_NAMES: Record<string, string> = {};
-for (let i = 1; i <= 30; i++) INITIAL_TEAM_NAMES[i.toString()] = `Team ${i}`;
+for (let i = 1; i <= 20; i++) INITIAL_TEAM_NAMES[i.toString()] = `Team ${i}`;
 
 function nowMs() {
   return Date.now();
+}
+
+function isMockModeEnabled(): boolean {
+  const env = (import.meta as any).env || {};
+  const forceMock = String(env.VITE_USE_MOCK_API ?? '').toLowerCase() === 'true';
+  const prod = Boolean(env.PROD);
+  const base = String(env.VITE_API_BASE_URL ?? '').trim();
+  return forceMock || (prod && !base);
 }
 
 function toRole(apiRole: string | null): Role {
@@ -219,7 +228,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Professional polling: /v1/session/me + /v1/rounds/active (+ role-specific data)
   useEffect(() => {
-    const storedUserId = localStorage.getItem(LS_USER_ID);
+    // Start polling as soon as we have a logged-in user (including right after `login()`),
+    // not only on initial page load.
+    const storedUserId = localStorage.getItem(LS_USER_ID) ?? (user ? String(user.user_id) : null);
     if (!storedUserId) return;
 
     let cancelled = false;
@@ -425,7 +436,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       abortRef.current?.abort();
       if (pollTimer) clearInterval(pollTimer);
     };
-  }, []);
+  }, [user?.user_id]);
 
   // Timer Logic
   useEffect(() => {
@@ -612,7 +623,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   
   const updateUser = async (userId: string, updates: Partial<User>) => {
     if (!roundId) return;
-    if (!user || user.role !== ('INSTRUCTOR' as Role)) return;
+    if (!user) return;
+    const isInstructor = user.role === ('INSTRUCTOR' as Role);
+    const isSelf = Number(userId) === user.user_id;
+    // Allow DebugPanel to switch the current user's role/team in mock/demo mode (even if not instructor),
+    // so you can jump between JM/QC/Customer views during local demos.
+    if (!isInstructor && !(isMockModeEnabled() && isSelf)) return;
     const uid = Number(userId) as UserId;
 
     const role =
@@ -824,8 +840,17 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const setRound = (_round: number) => {
-    // Round selection is driven by backend round_id; keeping this as no-op avoids UI changes.
+  const setRound = (round: number) => {
+    // In the real backend-driven flow, round selection is driven by active round state.
+    // For mock/demo mode, allow instructor to toggle Round 1/2 to unlock the UI paths.
+    if (!isMockModeEnabled()) return;
+    const next = round === 2 ? 2 : 1;
+    setConfig(prev => ({ ...prev, round: next }));
+    try {
+      setMockRoundNumber(next as 1 | 2);
+    } catch {
+      // ignore
+    }
   };
 
   const setGameActive = async (isActive: boolean) => {

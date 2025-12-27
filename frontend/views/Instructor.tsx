@@ -96,8 +96,8 @@ const Instructor: React.FC = () => {
     ...Object.keys(teamNames).filter(id => roster.some(u => u.team === id)),
   ])).sort((a, b) => Number(a) - Number(b));
 
-  // No pagination - show all
-  const visibleTeamIds = activeTeamIds;
+  // Demo constraint: cap the displayed teams to 20.
+  const visibleTeamIds = activeTeamIds.slice(0, 20);
 
   // Chart 1: Bar
   const barChartData = visibleTeamIds.map((teamId) => {
