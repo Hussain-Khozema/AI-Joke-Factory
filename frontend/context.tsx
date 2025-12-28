@@ -106,15 +106,23 @@ function mapBatchFromTeamList(
 ): Batch {
   const batch_id = teamBatches.batch_id;
   const status = teamBatches.status;
-  const jokes: Joke[] = (jokeTexts || []).map((txt, idx) => {
-    const fakeJokeId = Number(`${batch_id}${idx}`); // stable-ish per batch; only for UI rendering
-    return {
-      joke_id: fakeJokeId as JokeId,
-      joke_text: txt,
-      id: String(fakeJokeId),
-      content: txt,
-    };
-  });
+  const jokesFromApi = Array.isArray(teamBatches.jokes) ? teamBatches.jokes : null;
+  const jokes: Joke[] = jokesFromApi
+    ? jokesFromApi.map(j => ({
+        joke_id: j.joke_id as JokeId,
+        joke_text: j.joke_text,
+        id: String(j.joke_id),
+        content: j.joke_text,
+      }))
+    : (jokeTexts || []).map((txt, idx) => {
+        const fakeJokeId = Number(`${batch_id}${idx}`); // stable-ish per batch; only for UI rendering
+        return {
+          joke_id: fakeJokeId as JokeId,
+          joke_text: txt,
+          id: String(fakeJokeId),
+          content: txt,
+        };
+      });
 
   const submittedAt = teamBatches.submitted_at ? Date.parse(teamBatches.submitted_at) : undefined;
   const ratedAt = teamBatches.rated_at ? Date.parse(teamBatches.rated_at) : undefined;
@@ -374,10 +382,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Customer-only: hydrate wallet/purchases from budget + market.
         if (role === ('CUSTOMER' as Role)) {
           try {
-            const [budget, market] = await Promise.all([
+            const [budgetRaw, marketRaw] = await Promise.all([
               customerService.budget(me.round_id),
               customerService.market(me.round_id),
             ]);
+            const budget: any = (budgetRaw as any)?.data ?? budgetRaw;
+            const market: any = (marketRaw as any)?.data ?? marketRaw;
             if (!cancelled) {
               nextUser.wallet = budget.remaining_budget;
               nextUser.purchasedJokes = market.items.filter(i => i.is_bought_by_me).map(i => String(i.joke_id));
@@ -925,17 +935,19 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user || !roundId) return;
     const jid = Number(jokeId) as JokeId;
     try {
-      const resp = await customerService.buy(roundId, jid);
+      const respRaw = await customerService.buy(roundId, jid);
+      const resp: any = (respRaw as any)?.data ?? respRaw;
       setUser(prev => {
         if (!prev) return prev;
         return {
           ...prev,
-          wallet: resp.budget.remaining_budget,
+          wallet: resp?.budget?.remaining_budget ?? prev.wallet,
           purchasedJokes: Array.from(new Set([...prev.purchasedJokes, String(jid)])),
         };
       });
-      const market = await customerService.market(roundId);
-      setMarketItems(market.items);
+      const marketRaw = await customerService.market(roundId);
+      const market: any = (marketRaw as any)?.data ?? marketRaw;
+      setMarketItems(market?.items ?? []);
     } catch (e) {
       if (e instanceof ApiError) {
         if (e.status === 409 && e.code === 'ROUND_NOT_ACTIVE') {
@@ -959,17 +971,19 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!user || !roundId) return;
     const jid = Number(jokeId) as JokeId;
     try {
-      const resp = await customerService.return(roundId, jid);
+      const respRaw = await customerService.return(roundId, jid);
+      const resp: any = (respRaw as any)?.data ?? respRaw;
       setUser(prev => {
         if (!prev) return prev;
         return {
           ...prev,
-          wallet: resp.budget.remaining_budget,
+          wallet: resp?.budget?.remaining_budget ?? prev.wallet,
           purchasedJokes: prev.purchasedJokes.filter(id => id !== String(jid)),
         };
       });
-      const market = await customerService.market(roundId);
-      setMarketItems(market.items);
+      const marketRaw = await customerService.market(roundId);
+      const market: any = (marketRaw as any)?.data ?? marketRaw;
+      setMarketItems(market?.items ?? []);
     } catch (e) {
       if (e instanceof ApiError) {
         if (e.status === 409 && e.code === 'ROUND_NOT_ACTIVE') {

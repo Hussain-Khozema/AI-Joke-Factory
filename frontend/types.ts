@@ -189,6 +189,7 @@ export interface ApiTeamBatchesResponse {
     passes_count: number | null;
     feedback?: string | null;
     tag_summary?: Array<{ tag: string; count: number }>;
+    jokes?: Array<{ joke_id: JokeId; joke_text: string }>;
   }>;
 }
 
