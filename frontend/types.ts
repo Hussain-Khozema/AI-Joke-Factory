@@ -268,7 +268,7 @@ export interface ApiInstructorLobbyResponse {
 
 export interface ApiInstructorStatsResponse {
   round_id: RoundId;
-  teams: Array<{
+  leaderboard: Array<{
     rank: number;
     team: Team;
     points: number;
@@ -276,6 +276,42 @@ export interface ApiInstructorStatsResponse {
     batches_rated: number;
     avg_score_overall: number;
     accepted_jokes: number;
+  }>;
+  cumulative_sales: Array<{
+    event_index: number;
+    timestamp: string;
+    team_id: TeamId;
+    team_name: string;
+    total_sales: number;
+  }>;
+  batch_quality_by_size: Array<{
+    batch_id: BatchId;
+    team_id: TeamId;
+    team_name: string;
+    submitted_at: string;
+    batch_size: number;
+    avg_score: number;
+  }>;
+  learning_curve: Array<{
+    team_id: TeamId;
+    team_name: string;
+    batch_order: number;
+    avg_score: number;
+  }>;
+  output_vs_rejection: Array<{
+    team_id: TeamId;
+    team_name: string;
+    total_jokes: number;
+    rated_jokes: number;
+    accepted_jokes: number;
+    rejection_rate: number;
+  }>;
+  revenue_vs_acceptance: Array<{
+    team_id: TeamId;
+    team_name: string;
+    total_sales: number;
+    accepted_jokes: number;
+    acceptance_rate: number;
   }>;
 }
 

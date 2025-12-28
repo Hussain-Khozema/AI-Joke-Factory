@@ -150,6 +150,107 @@ function mapBatchFromTeamList(
   };
 }
 
+function normalizeInstructorStats(raw: any): ApiInstructorStatsResponse {
+  const data = raw?.data ?? raw ?? {};
+  const normalizeTeam = (t: any) => ({
+    id: Number(t?.id ?? t?.ID ?? 0) as TeamId,
+    name: String(t?.name ?? t?.Name ?? `Team ${t?.id ?? t?.ID ?? ''}`),
+  });
+  const leaderboard = Array.isArray(data.leaderboard ?? data.Leaderboard) ? (data.leaderboard ?? data.Leaderboard) : [];
+  const normLeaderboard = leaderboard.map((item: any) => ({
+    rank: Number(item.rank ?? item.Rank ?? 0),
+    team: normalizeTeam(item.team ?? item.Team ?? {}),
+    points: Number(item.points ?? item.Points ?? 0),
+    total_sales: Number(item.total_sales ?? item.TotalSales ?? 0),
+    batches_rated: Number(item.batches_rated ?? item.BatchesRated ?? 0),
+    avg_score_overall: Number(item.avg_score_overall ?? item.AvgScoreOverall ?? 0),
+    accepted_jokes: Number(item.accepted_jokes ?? item.AcceptedJokes ?? 0),
+  }));
+
+  const cumulative_sales = Array.isArray(data.cumulative_sales ?? data.CumulativeSales) ? (data.cumulative_sales ?? data.CumulativeSales) : [];
+  const batch_quality_by_size = Array.isArray(data.batch_quality_by_size ?? data.BatchQualityBySize) ? (data.batch_quality_by_size ?? data.BatchQualityBySize) : [];
+  const learning_curve = Array.isArray(data.learning_curve ?? data.LearningCurve) ? (data.learning_curve ?? data.LearningCurve) : [];
+  const output_vs_rejection = Array.isArray(data.output_vs_rejection ?? data.OutputVsRejection) ? (data.output_vs_rejection ?? data.OutputVsRejection) : [];
+  const revenue_vs_acceptance = Array.isArray(data.revenue_vs_acceptance ?? data.RevenueVsAcceptance) ? (data.revenue_vs_acceptance ?? data.RevenueVsAcceptance) : [];
+
+  const mapKeys = (arr: any[], keyMap: Record<string, string>) =>
+    arr.map((item: any) => {
+      const out: any = {};
+      Object.entries(item).forEach(([k, v]) => {
+        const nk = keyMap[k] ?? keyMap[k.toLowerCase()] ?? k;
+        out[nk] = v;
+      });
+      return out;
+    });
+
+  return {
+    round_id: Number(data.round_id ?? data.RoundId ?? data.roundId ?? 0) as RoundId,
+    leaderboard: normLeaderboard,
+    cumulative_sales: mapKeys(cumulative_sales, {
+      event_index: 'event_index',
+      EventIndex: 'event_index',
+      team_id: 'team_id',
+      TeamId: 'team_id',
+      team_name: 'team_name',
+      TeamName: 'team_name',
+      total_sales: 'total_sales',
+      TotalSales: 'total_sales',
+      timestamp: 'timestamp',
+      Timestamp: 'timestamp',
+    }),
+    batch_quality_by_size: mapKeys(batch_quality_by_size, {
+      batch_id: 'batch_id',
+      BatchId: 'batch_id',
+      team_id: 'team_id',
+      TeamId: 'team_id',
+      team_name: 'team_name',
+      TeamName: 'team_name',
+      submitted_at: 'submitted_at',
+      SubmittedAt: 'submitted_at',
+      batch_size: 'batch_size',
+      BatchSize: 'batch_size',
+      avg_score: 'avg_score',
+      AvgScore: 'avg_score',
+    }),
+    learning_curve: mapKeys(learning_curve, {
+      team_id: 'team_id',
+      TeamId: 'team_id',
+      team_name: 'team_name',
+      TeamName: 'team_name',
+      batch_order: 'batch_order',
+      BatchOrder: 'batch_order',
+      avg_score: 'avg_score',
+      AvgScore: 'avg_score',
+    }),
+    output_vs_rejection: mapKeys(output_vs_rejection, {
+      team_id: 'team_id',
+      TeamId: 'team_id',
+      team_name: 'team_name',
+      TeamName: 'team_name',
+      total_jokes: 'total_jokes',
+      TotalJokes: 'total_jokes',
+      rated_jokes: 'rated_jokes',
+      RatedJokes: 'rated_jokes',
+      accepted_jokes: 'accepted_jokes',
+      AcceptedJokes: 'accepted_jokes',
+      rejection_rate: 'rejection_rate',
+      RejectionRate: 'rejection_rate',
+    }),
+    revenue_vs_acceptance: mapKeys(revenue_vs_acceptance, {
+      team_id: 'team_id',
+      TeamId: 'team_id',
+      team_name: 'team_name',
+      TeamName: 'team_name',
+      total_sales: 'total_sales',
+      TotalSales: 'total_sales',
+      accepted_jokes: 'accepted_jokes',
+      AcceptedJokes: 'accepted_jokes',
+      acceptance_rate: 'acceptance_rate',
+      AcceptanceRate: 'acceptance_rate',
+    }),
+  };
+}
+
 interface GameContextType {
   user: User | null;
   roster: User[]; // Instructor: lobby; JM/QC: teammates
@@ -343,7 +444,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               };
 
               setInstructorLobby(lobbyNormalized as any);
-              if (stats) setInstructorStats(stats as any);
+              if (stats) setInstructorStats(normalizeInstructorStats((stats as any)?.data ?? stats ?? null));
 
               // Build roster for instructor drag/drop (teams + customers + unassigned)
               const rosterUsers: User[] = [];
@@ -487,7 +588,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               };
 
               setInstructorLobby(lobbyNormalized as any);
-              if (stats) setInstructorStats(stats as any);
+              if (stats) setInstructorStats(normalizeInstructorStats((stats as any)?.data ?? stats ?? null));
 
               // Build roster for instructor drag/drop (teams + customers + unassigned)
               const rosterUsers: User[] = [];

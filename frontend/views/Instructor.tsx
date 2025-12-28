@@ -4,7 +4,7 @@ import { Button, Card, RoleLayout, Modal } from '../components';
 import { Play, Pause, RefreshCw, Settings, Clock, StopCircle, GripVertical, Users, CheckCircle, Maximize2 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  LineChart, Line, ScatterChart, Scatter
+  LineChart, Line, ScatterChart, Scatter, Legend
 } from 'recharts';
 import { Role } from '../types';
 
@@ -78,94 +78,62 @@ const Instructor: React.FC = () => {
 
   // --- Data Processing ---
   
-  const teamStats = (instructorStats?.teams || []).reduce<Record<string, TeamStat>>((acc, t) => {
-    const teamId = String(t.team.id);
-    acc[teamId] = {
-      team: teamId,
-      batches: t.batches_rated,
-      totalScore: t.avg_score_overall * Math.max(1, t.batches_rated),
-      accepted: t.accepted_jokes,
-      jokeCount: Math.max(1, t.batches_rated),
-      revenue: t.total_sales,
-    };
-    return acc;
-  }, {});
-
+  const leaderboard = instructorStats?.leaderboard || [];
   const activeTeamIds = Array.from(new Set([
-    ...(instructorStats?.teams || []).map(t => String(t.team.id)),
+    ...leaderboard.map(t => String(t.team.id)),
     ...Object.keys(teamNames).filter(id => roster.some(u => u.team === id)),
   ])).sort((a, b) => Number(a) - Number(b));
 
   // No pagination - show all
   const visibleTeamIds = activeTeamIds;
 
-  // Chart 1: Bar
-  const barChartData = visibleTeamIds.map((teamId) => {
-    const stat = teamStats[teamId] || { revenue: 0, accepted: 0, batches: 0, totalScore: 0, jokeCount: 1 };
-    return {
-      name: teamNames[teamId] || `Team ${teamId}`,
-      Revenue: stat.revenue,
-      Accepted: stat.accepted,
-      Quality: stat.batches > 0 ? (stat.totalScore / stat.jokeCount).toFixed(2) : 0,
-    };
-  });
+  const barChartData = (instructorStats?.revenue_vs_acceptance || []).map(item => ({
+    name: teamNames[String(item.team_id)] || item.team_name,
+    Revenue: item.total_sales,
+    Accepted: item.accepted_jokes,
+    AcceptanceRate: (item.acceptance_rate ?? 0) * 100,
+  }));
 
-  // Chart 2: Cumulative Sales
-  // API stats doesn't provide time-series; synthesize a simple progression by batches_rated.
-  const maxEvents = Math.max(
-    1,
-    ...visibleTeamIds.map(tid => {
-      const s = instructorStats?.teams?.find(t => String(t.team.id) === tid);
-      return s?.batches_rated ?? 1;
-    }),
-  );
-
-  const cumulativeSalesData: any[] = Array.from({ length: maxEvents }).map((_, idx) => {
-    const dataPoint: any = { index: idx + 1 };
-    visibleTeamIds.forEach(tid => {
-      const s = instructorStats?.teams?.find(t => String(t.team.id) === tid);
-      const batchesRated = s?.batches_rated ?? 0;
-      const totalSales = s?.total_sales ?? 0;
-      const frac = batchesRated > 0 ? Math.min(1, (idx + 1) / batchesRated) : 0;
-      dataPoint[tid] = Math.round(totalSales * frac);
+  const cumulativeSalesData = (() => {
+    const events = instructorStats?.cumulative_sales || [];
+    const grouped: Record<number, any> = {};
+    events.forEach(ev => {
+      if (!grouped[ev.event_index]) grouped[ev.event_index] = { index: ev.event_index };
+      grouped[ev.event_index][String(ev.team_id)] = ev.total_sales;
     });
-    return dataPoint;
-  });
+    return Object.values(grouped).sort((a: any, b: any) => a.index - b.index);
+  })();
 
-  // Chart 3: Scatter Size vs Quality
-  const sizeVsQualityData = (instructorStats?.teams || [])
-    .filter(t => visibleTeamIds.includes(String(t.team.id)))
-    .map(t => ({
-      size: t.batches_rated,
-      quality: t.avg_score_overall || 0,
-      round: config.round,
-      team: String(t.team.id),
-      fill: config.round === 1 ? '#3B82F6' : '#EF4444',
-    }));
+  const sizeVsQualityData = (instructorStats?.batch_quality_by_size || []).map(item => ({
+    size: item.batch_size,
+    quality: item.avg_score,
+    team: String(item.team_id),
+    name: item.team_name,
+  }));
 
-  // Chart 4: Learning Curve
-  const learningCurveData: any[] = Array.from({ length: maxEvents }).map((_, idx) => {
-    const point: any = { seq: idx + 1 };
-    visibleTeamIds.forEach(tid => {
-      const s = instructorStats?.teams?.find(t => String(t.team.id) === tid);
-      const batchesRated = s?.batches_rated ?? 0;
-      point[tid] = idx < batchesRated ? (s?.avg_score_overall ?? 0) : null;
+  const learningCurveData = (() => {
+    const points = instructorStats?.learning_curve || [];
+    const grouped: Record<number, any> = {};
+    points.forEach(p => {
+      if (!grouped[p.batch_order]) grouped[p.batch_order] = { seq: p.batch_order };
+      grouped[p.batch_order][String(p.team_id)] = p.avg_score;
     });
-    return point;
-  });
+    return Object.values(grouped).sort((a: any, b: any) => a.seq - b.seq);
+  })();
 
-  // Chart 5: Misalignment
-  const misalignmentData = visibleTeamIds.map((teamId, idx) => {
-    const s = instructorStats?.teams?.find(t => String(t.team.id) === teamId);
-    // Stats API doesn't include total output/rejected; approximate with accepted_jokes and 0% rejection.
-    return {
-      team: teamId,
-      name: teamNames[teamId],
-      output: s?.accepted_jokes ?? 0,
-      rejectionRate: 0,
-      fill: PALETTE[idx % PALETTE.length],
-    };
-  });
+  const misalignmentData = (instructorStats?.output_vs_rejection || []).map((item, idx) => ({
+    team: String(item.team_id),
+    name: teamNames[String(item.team_id)] || item.team_name,
+    output: item.total_jokes,
+    rejectionRate: (item.rejection_rate ?? 0) * 100,
+    fill: PALETTE[idx % PALETTE.length],
+  }));
+
+  const leaderboardChartData = (instructorStats?.leaderboard || []).map(item => ({
+    name: teamNames[String(item.team.id)] || item.team.name,
+    Points: item.points,
+    Sales: item.total_sales,
+  }));
 
   const rosterByTeam: Record<string, typeof roster> = {};
   roster.forEach(u => {
@@ -215,11 +183,11 @@ const Instructor: React.FC = () => {
                    <BarChart data={barChartData} margin={{ left: 20 }}>
                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
                      <XAxis dataKey="name" />
-                     <YAxis yAxisId="left" orientation="left" stroke="#10B981" />
-                     <YAxis yAxisId="right" orientation="right" stroke="#6366F1" />
+                    <YAxis yAxisId="left" orientation="left" stroke="#10B981" />
+                    <YAxis yAxisId="right" orientation="right" stroke="#6366F1" />
                      <Tooltip />
                      <Bar yAxisId="left" dataKey="Revenue" fill="#10B981" name="Revenue ($)" radius={[4, 4, 0, 0]} />
-                     <Bar yAxisId="right" dataKey="Accepted" fill="#6366F1" name="Accepted Jokes" radius={[4, 4, 0, 0]} />
+                    <Bar yAxisId="right" dataKey="Accepted" fill="#6366F1" name="Accepted Jokes" radius={[4, 4, 0, 0]} />
                    </BarChart>
                  </ResponsiveContainer>
             );
@@ -253,7 +221,7 @@ const Instructor: React.FC = () => {
                    <XAxis type="number" dataKey="size" name="Batch Size" unit=" jokes" />
                    <YAxis type="number" dataKey="quality" name="Avg Quality" domain={[0, 5]} label={{ value: 'Avg Quality', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }} />
                    <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                   <Scatter name="Batches (Blue=R1, Red=R2)" data={sizeVsQualityData} fill="#8884d8" />
+                  <Scatter name="Batches" data={sizeVsQualityData} fill="#8884d8" />
                  </ScatterChart>
                </ResponsiveContainer>
             );
@@ -290,6 +258,20 @@ const Instructor: React.FC = () => {
                    <Scatter name="Teams" data={misalignmentData} fill="#82ca9d" />
                  </ScatterChart>
                </ResponsiveContainer>
+            );
+        case 'leaderboard':
+            return (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={leaderboardChartData} margin={{ left: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="Points" fill="#0ea5e9" radius={[4,4,0,0]} />
+                  <Bar dataKey="Sales" fill="#10b981" radius={[4,4,0,0]} />
+                </BarChart>
+              </ResponsiveContainer>
             );
         default: return null;
     }
@@ -471,6 +453,16 @@ const Instructor: React.FC = () => {
           >
              <div className="h-72 w-full">
                {renderChart('revenue')}
+             </div>
+          </Card>
+
+          {/* Leaderboard */}
+          <Card 
+            title="Leaderboard"
+            action={<button onClick={() => setExpandedChart('leaderboard')} className="p-1 hover:bg-gray-100 rounded text-gray-500"><Maximize2 size={18} /></button>}
+          >
+             <div className="h-72 w-full">
+               {renderChart('leaderboard')}
              </div>
           </Card>
 
