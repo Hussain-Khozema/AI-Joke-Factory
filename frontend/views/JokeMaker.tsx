@@ -49,13 +49,21 @@ const JokeMaker: React.FC = () => {
 
   // Helper to aggregate tags
   const getBatchTags = (batch: Batch) => {
+    if (batch.tagSummary && batch.tagSummary.length > 0) {
+      return [...batch.tagSummary].sort((a, b) => b.count - a.count).map(ts => [ts.tag, ts.count] as const);
+    }
     const counts: Record<string, number> = {};
     batch.jokes.forEach(j => {
-        (j.tags || []).forEach(t => {
-            counts[t] = (counts[t] || 0) + 1;
-        });
+      (j.tags || []).forEach(t => {
+        counts[t] = (counts[t] || 0) + 1;
+      });
     });
-    return Object.entries(counts).sort(([,a], [,b]) => b - a);
+    return Object.entries(counts).sort(([, a], [, b]) => b - a);
+  };
+
+  const formatTagLabel = (tag: string) => {
+    const normalized = tag.replace(/_/g, ' ').toLowerCase();
+    return normalized.replace(/\b\w/g, c => c.toUpperCase());
   };
 
   return (
@@ -75,7 +83,7 @@ const JokeMaker: React.FC = () => {
                             {getBatchTags(feedbackBatch).length > 0 ? (
                                 getBatchTags(feedbackBatch).map(([tag, count]) => (
                                     <span key={tag} className="px-3 py-1 bg-gray-900 text-white rounded-full text-sm border border-gray-700">
-                                        {tag} <span className="font-bold text-gray-300 ml-1">x{count}</span>
+                                        {formatTagLabel(tag)} <span className="font-bold text-gray-300 ml-1">x{count}</span>
                                     </span>
                                 ))
                             ) : (

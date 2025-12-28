@@ -90,6 +90,7 @@ export interface Batch {
   avgRating?: number;
   acceptedCount?: number;
   feedback?: string;
+  tagSummary?: Array<{ tag: string; count: number }>;
 }
 
 export interface GameConfig {
@@ -186,6 +187,8 @@ export interface ApiTeamBatchesResponse {
     rated_at?: string;
     avg_score: number | null;
     passes_count: number | null;
+    feedback?: string | null;
+    tag_summary?: Array<{ tag: string; count: number }>;
   }>;
 }
 
@@ -216,12 +219,7 @@ export interface ApiQcQueueCountResponse {
 }
 
 export interface ApiQcSubmitRatingsRequest {
-  ratings: Array<{ joke_id: JokeId; rating: number }>;
-  /**
-   * New (not in original spec): optional structured QC annotations.
-   * Backend may ignore these fields until implemented.
-   */
-  tags?: Array<{ joke_id: JokeId; tags: string[] }>;
+  ratings: Array<{ joke_id: JokeId; rating: number; tag: string }>;
   feedback?: string;
 }
 

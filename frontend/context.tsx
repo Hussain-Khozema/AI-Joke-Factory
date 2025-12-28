@@ -34,6 +34,25 @@ const DEFAULT_ROUND2_BATCH_LIMIT = 6;
 const INITIAL_TEAM_NAMES: Record<string, string> = {};
 for (let i = 1; i <= 30; i++) INITIAL_TEAM_NAMES[i.toString()] = `Team ${i}`;
 
+// Map UI tag labels to backend enum values for QC submission.
+const QC_TAG_MAP: Record<string, string> = {
+  'EXCELLENT / STANDOUT': 'EXCELLENT_STANDOUT',
+  'EXCELLENT_STANDOUT': 'EXCELLENT_STANDOUT',
+  'GENUINELY FUNNY': 'GENUINELY_FUNNY',
+  'MADE ME SMILE': 'MADE_ME_SMILE',
+  'ORIGINAL IDEA': 'ORIGINAL_IDEA',
+  'POLITE SMILE': 'POLITE_SMILE',
+  "DIDN'T LAND": 'DIDNT_LAND',
+  'DIDNT LAND': 'DIDNT_LAND',
+  'NOT ACCEPTABLE': 'NOT_ACCEPTABLE',
+  OTHER: 'OTHER',
+};
+
+function normalizeQcTag(label: string): string | null {
+  const key = label.trim().toUpperCase().replace(/\s+/g, ' ');
+  return QC_TAG_MAP[key] ?? null;
+}
+
 function nowMs() {
   return Date.now();
 }
@@ -110,6 +129,8 @@ function mapBatchFromTeamList(
     rated_at: teamBatches.rated_at,
     avg_score: teamBatches.avg_score,
     passes_count: teamBatches.passes_count,
+    feedback: teamBatches.feedback ?? undefined,
+    tagSummary: teamBatches.tag_summary ?? [],
     // UI compatibility aliases
     id: String(batch_id),
     team: String(team_id),
@@ -512,11 +533,34 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setRoster([nextUser]);
         } else if (role === ('QUALITY_CONTROL' as Role)) {
           // QC queue (live work)
+          let normalizedQueue: ApiQcQueueNextResponse | null = null;
           try {
-            const q = await qcService.queueNext(me.round_id);
-            if (!cancelled) setQcQueue(q);
+            const rawQ = await qcService.queueNext(me.round_id);
+            const qAny: any = rawQ;
+            const qData = (qAny?.data ?? qAny) as any;
+            normalizedQueue = qData
+              ? {
+                  batch: qData.batch,
+                  jokes: Array.isArray(qData.jokes) ? qData.jokes : [],
+                  queue_size: qData.queue_size ?? 0,
+                }
+              : null;
+            if (!cancelled) setQcQueue(normalizedQueue);
           } catch {
             if (!cancelled) setQcQueue(null);
+          }
+
+          // Team summary for QC (rank/points/avg quality). Prefer batch team_id; fallback to assignment team.
+          const summaryTeamId = (normalizedQueue?.batch?.team_id ?? me.assignment?.team_id ?? null) as TeamId | null;
+          if (summaryTeamId) {
+            try {
+              const ts = await jmService.teamSummary(me.round_id, summaryTeamId);
+              if (!cancelled) {
+                setTeamSummary((ts as any)?.data ?? ts ?? null);
+              }
+            } catch {
+              // ignore summary failures; will retry on next poll
+            }
           }
 
           setRoster([nextUser]);
@@ -798,19 +842,34 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const ratingList = Object.entries(ratings).map(([jid, rating]) => ({
       joke_id: Number(jid) as JokeId,
       rating,
+      tag: '',
     }));
 
     try {
-      const tagsList = Object.entries(tags).map(([jid, t]) => ({
-        joke_id: Number(jid) as JokeId,
-        tags: t,
-      }));
+      // Attach normalized tag per rating (single tag allowed).
+      for (const entry of ratingList) {
+        const selected = tags[String(entry.joke_id)]?.[0] ?? '';
+        const mapped = normalizeQcTag(selected);
+        if (!mapped) {
+          alert('One or more feedback tags are invalid. Please reselect tags.');
+          return;
+        }
+        entry.tag = mapped;
+      }
+
+      const tagSummaryCounts = ratingList.reduce<Record<string, number>>((acc, entry) => {
+        acc[entry.tag] = (acc[entry.tag] || 0) + 1;
+        return acc;
+      }, {});
+      const tagSummary = Object.entries(tagSummaryCounts).map(([tag, count]) => ({ tag, count }));
 
       const resp = await qcService.submitRatings(bid, {
         ratings: ratingList,
-        tags: tagsList,
         feedback,
       });
+      const respAny: any = (resp as any)?.data ?? resp;
+      const respBatch: any = respAny?.batch ?? respAny;
+      const respPublished: any = respAny?.published ?? respAny?.Published ?? null;
       // Build a local “rated batch” for UI history (API doesn't return tag/feedback but we preserve client-side).
       const ratedJokes: Joke[] = active.jokes.map(j => ({
         joke_id: j.joke_id,
@@ -818,26 +877,27 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         id: String(j.joke_id),
         content: j.joke_text,
         rating: ratings[String(j.joke_id)] ?? 1,
-        tags: tags[String(j.joke_id)] ?? [],
+        tags: [ratingList.find(r => r.joke_id === j.joke_id)?.tag ?? ''],
       }));
-      const avgRating = resp.batch.avg_score;
-      const acceptedCount = resp.batch.passes_count;
+      const avgRating = respBatch?.avg_score ?? null;
+      const acceptedCount = respBatch?.passes_count ?? null;
       const batch: Batch = {
-        batch_id: resp.batch.batch_id,
+        batch_id: respBatch.batch_id,
         round_id: roundId,
         team_id: active.batch.team_id,
         status: 'RATED',
         jokes: ratedJokes,
-        rated_at: resp.batch.rated_at,
-        avg_score: resp.batch.avg_score,
-        passes_count: resp.batch.passes_count,
-        id: String(resp.batch.batch_id),
+        rated_at: respBatch.rated_at,
+        avg_score: respBatch.avg_score,
+        passes_count: respBatch.passes_count,
+        id: String(respBatch.batch_id),
         team: String(active.batch.team_id),
         round: config.round,
-        ratedAt: Date.parse(resp.batch.rated_at),
+        ratedAt: respBatch.rated_at ? Date.parse(respBatch.rated_at) : undefined,
         avgRating,
         acceptedCount,
         feedback,
+        tagSummary,
       };
       qcRatedHistoryRef.current[String(batch.batch_id)] = batch;
       setBatches(Object.values(qcRatedHistoryRef.current));

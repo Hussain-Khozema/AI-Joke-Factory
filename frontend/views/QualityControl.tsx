@@ -16,7 +16,7 @@ const TAG_OPTIONS = [
 ];
 
 const QualityControl: React.FC = () => {
-  const { user, batches, rateBatch, config, qcQueue } = useGame();
+  const { user, batches, rateBatch, config, qcQueue, teamSummary } = useGame();
   
   // API queue provides the next SUBMITTED batch; local state keeps rated history for this session.
   const pendingBatches: Batch[] = qcQueue ? [{
@@ -44,16 +44,18 @@ const QualityControl: React.FC = () => {
   const [currentRatings, setCurrentRatings] = useState<{ [jokeId: string]: number }>({});
   const [currentTags, setCurrentTags] = useState<{ [jokeId: string]: string[] }>({});
   const [batchFeedback, setBatchFeedback] = useState("");
-
   const activeBatch = pendingBatches.find(b => b.id === activeBatchId) || pendingBatches[0];
 
-  // Stats (rated history)
+  // Stats (rated history + live summary)
+  const summary = teamSummary ?? { rank: null, points: null, avg_score_overall: null };
   const totalAccepted = completedBatches.reduce((sum, b) => sum + (b.acceptedCount || 0), 0);
-  const avgScore = completedBatches.length > 0 
-    ? (completedBatches.reduce((sum, b) => sum + (b.avgRating || 0), 0) / completedBatches.length).toFixed(1) 
-    : 'N/A';
-  const totalPoints = totalAccepted * 1; 
-  const myRank = '-';
+  const avgScore = summary.avg_score_overall !== null
+    ? summary.avg_score_overall.toFixed(1)
+    : (completedBatches.length > 0 
+      ? (completedBatches.reduce((sum, b) => sum + (b.avgRating || 0), 0) / completedBatches.length).toFixed(1) 
+      : 'N/A');
+  const totalPoints = summary.points ?? totalAccepted * 1; 
+  const myRank = summary.rank !== null ? String(summary.rank) : '-';
 
   const handleRate = (jokeId: string, rating: number) => {
     setCurrentRatings(prev => ({ ...prev, [jokeId]: rating }));
@@ -61,14 +63,13 @@ const QualityControl: React.FC = () => {
 
   const toggleTag = (jokeId: string, tagLabel: string) => {
     setCurrentTags(prev => {
-      const tags = prev[jokeId] || [];
-      if (tags.includes(tagLabel)) {
-        return { ...prev, [jokeId]: tags.filter(t => t !== tagLabel) };
-      } else {
-        return { ...prev, [jokeId]: [...tags, tagLabel] };
-      }
+      const current = prev[jokeId] || [];
+      // Only one tag allowed per joke: replace selection; clicking same tag clears.
+      const next = current.includes(tagLabel) ? [] : [tagLabel];
+      return { ...prev, [jokeId]: next };
     });
   };
+
 
   const needsFeedback = Object.values(currentTags).flat().includes("Other");
 
