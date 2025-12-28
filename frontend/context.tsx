@@ -748,23 +748,24 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       const created = await jmService.createBatch(roundId, { team_id: user.team_id, jokes: jokeContents });
+      const createdBatch: any = (created as any)?.data?.batch ?? (created as any)?.batch ?? created;
       // Cache joke text for UI history.
-      submittedBatchJokesRef.current[String(created.batch.batch_id)] = jokeContents;
+      submittedBatchJokesRef.current[String(createdBatch.batch_id)] = jokeContents;
       // Trigger refresh: rely on poll; also do a quick local update for responsiveness.
       const batch: Batch = {
-        batch_id: created.batch.batch_id,
-        round_id: created.batch.round_id,
-        team_id: created.batch.team_id,
-        status: created.batch.status,
+        batch_id: createdBatch.batch_id,
+        round_id: createdBatch.round_id,
+        team_id: createdBatch.team_id,
+        status: createdBatch.status,
         jokes: jokeContents.map((txt, idx) => {
-          const fakeJokeId = Number(`${created.batch.batch_id}${idx}`) as JokeId;
+          const fakeJokeId = Number(`${createdBatch.batch_id}${idx}`) as JokeId;
           return { joke_id: fakeJokeId, joke_text: txt, id: String(fakeJokeId), content: txt };
         }),
-        submitted_at: created.batch.submitted_at,
-        id: String(created.batch.batch_id),
-        team: String(created.batch.team_id),
+        submitted_at: createdBatch.submitted_at,
+        id: String(createdBatch.batch_id),
+        team: String(createdBatch.team_id),
         round: config.round,
-        submittedAt: Date.parse(created.batch.submitted_at),
+        submittedAt: createdBatch.submitted_at ? Date.parse(createdBatch.submitted_at) : undefined,
       };
       setBatches(prev => [...prev.filter(b => b.batch_id !== batch.batch_id), batch]);
     } catch (e) {
