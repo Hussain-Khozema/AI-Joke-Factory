@@ -329,7 +329,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const pollAbortRef = useRef<AbortController | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   
-  const [config, setConfig] = useState<GameConfig>({
+  const initialConfig = (): GameConfig => ({
     status: 'LOBBY', // Start in LOBBY to show setup screen
     round: 1,
     isActive: false,
@@ -340,6 +340,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     round1BatchSize: 5,
     round2BatchLimit: 6,
   });
+
+  const [config, setConfig] = useState<GameConfig>(initialConfig());
   // Initial load from localStorage (session only)
   useEffect(() => {
     const storedUserId = localStorage.getItem(LS_USER_ID);
@@ -777,6 +779,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem(LS_USER_ID);
     localStorage.removeItem(LS_DISPLAY_NAME);
     setRoundId(null);
+    setConfig(initialConfig());
     setRoster([]);
     setBatches([]);
     setMarketItems([]);
@@ -1139,13 +1142,16 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
   
-  const resetGame = () => {
-    // Best-effort: end round (instructor) then clear local session.
-    if (roundId && user?.role === ('INSTRUCTOR' as Role)) {
-      instructorService.end(roundId).catch(() => {
-        // ignore
-      });
+  const resetGame = async () => {
+    // Only instructors can reset; requires X-User-Id header (already set by apiClient via localStorage).
+    if (!user || user.role !== ('INSTRUCTOR' as Role)) return;
+    try {
+      await instructorService.reset();
+    } catch {
+      alert('Failed to reset game.');
+      return;
     }
+    // Clear local session/state.
     logout();
   };
 

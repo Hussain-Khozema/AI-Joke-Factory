@@ -52,6 +52,7 @@ const Instructor: React.FC = () => {
   const [localBatchSize, setLocalBatchSize] = useState(config.round1BatchSize);
   const [localBudget, setLocalBudget] = useState(config.customerBudget);
   const [selectedCustomerCount, setSelectedCustomerCount] = useState<number | null>(null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Expanded Chart State
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
@@ -281,6 +282,32 @@ const Instructor: React.FC = () => {
   return (
     <RoleLayout>
       <div className="space-y-8">
+        {/* Reset Confirm Modal */}
+        <Modal
+          isOpen={showResetConfirm}
+          onClose={() => setShowResetConfirm(false)}
+          title="Reset Game"
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-gray-700">
+              This will clear all game data. Are you sure you want to reset?
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setShowResetConfirm(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  setShowResetConfirm(false);
+                  resetGame();
+                }}
+              >
+                Yes, Reset
+              </Button>
+            </div>
+          </div>
+        </Modal>
         
         {/* Expanded Chart Modal */}
         <Modal 
@@ -389,7 +416,7 @@ const Instructor: React.FC = () => {
                  
                  <div className="w-px h-8 bg-gray-300 mx-2"></div>
                  
-                 <Button onClick={resetGame} variant="danger" className="p-2" title="Reset Game (Clear All)">
+                <Button onClick={() => setShowResetConfirm(true)} variant="danger" className="p-2" title="Reset Game (Clear All)">
                    <RefreshCw size={16} />
                  </Button>
                  {config.status === 'PLAYING' && (

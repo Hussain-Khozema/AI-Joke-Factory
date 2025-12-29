@@ -41,6 +41,10 @@ export const instructorService = {
   end(round_id: RoundId): Promise<void> {
     return apiRequest<void>(`/v1/instructor/rounds/${round_id}/end`, { method: 'POST' });
   },
+
+  reset(): Promise<{ status?: string; message?: string }> {
+    return apiRequest<{ status?: string; message?: string }>(`/v1/admin/reset`, { method: 'POST', body: {} });
+  },
 };
 
 
