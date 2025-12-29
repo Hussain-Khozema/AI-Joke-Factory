@@ -1,4 +1,5 @@
 import type { ApiErrorResponse } from '../types';
+import { mockApiRequest } from './mockApi';
 
 export class ApiError extends Error {
   status: number;
@@ -19,9 +20,20 @@ type ApiClientOptions = Omit<RequestInit, 'body' | 'headers'> & {
   body?: unknown;
 };
 
-function getBaseUrl(): string {
+function getConfiguredBaseUrl(): string | null {
   const envBase = (import.meta as any).env?.VITE_API_BASE_URL as string | undefined;
-  return (envBase && envBase.trim()) ? envBase : 'http://localhost:8081';
+  const v = envBase && envBase.trim() ? envBase.trim() : '';
+  return v ? v : null;
+}
+
+function getBaseUrl(): string {
+  return getConfiguredBaseUrl() ?? 'http://localhost:8081';
+}
+
+function shouldUseMockApi(): boolean {
+  const prod = Boolean((import.meta as any).env?.PROD);
+  const forceMock = String((import.meta as any).env?.VITE_USE_MOCK_API ?? '').toLowerCase() === 'true';
+  return forceMock || (prod && !getConfiguredBaseUrl());
 }
 
 function getUserIdHeader(): string | undefined {
@@ -62,9 +74,6 @@ async function parseErrorBody(resp: Response): Promise<{ code?: string; message:
 }
 
 export async function apiRequest<T>(path: string, opts: ApiClientOptions = {}): Promise<T> {
-  const baseUrl = getBaseUrl().replace(/\/+$/, '');
-  const url = `${baseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
-
   const userId = getUserIdHeader();
   const headers: Record<string, string> = {
     Accept: 'application/json',
@@ -78,6 +87,18 @@ export async function apiRequest<T>(path: string, opts: ApiClientOptions = {}): 
       headers[k] = v;
     }
   }
+
+  // Production fallback: if no backend base URL is configured, serve from a local mock API.
+  if (shouldUseMockApi()) {
+    const resp = await mockApiRequest<T>(path, { method: opts.method, headers, body: opts.body });
+    if (!resp.ok) {
+      throw new ApiError({ status: resp.status, code: resp.error.code, message: resp.error.message, details: resp.error.details });
+    }
+    return resp.data;
+  }
+
+  const baseUrl = getBaseUrl().replace(/\/+$/, '');
+  const url = `${baseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
 
   const resp = await fetch(url, {
     ...opts,
