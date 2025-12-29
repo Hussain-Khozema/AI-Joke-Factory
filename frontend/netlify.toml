@@ -4,6 +4,7 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  VITE_API_BASE_URL = "https://jokefactory-be.onrender.com"
 
 [[redirects]]
   from = "/*"

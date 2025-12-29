@@ -15,6 +15,11 @@ This repo supports:
 - Node.js **20+** recommended (Vite 6 / React 19 ecosystem)
 - `npm` (or equivalent)
 
+## Environment
+- Copy `env.example` to `.env.local` and adjust as needed.
+- Default example points to the Render backend at `https://jokefactory-be.onrender.com`.
+- Set `VITE_USE_MOCK_API=true` to force the built-in mock API instead.
+
 ## Install
 ```bash
 npm install
@@ -66,6 +71,7 @@ This repo includes `netlify.toml` and `public/_redirects`:
 - Publishes from `dist`
 - SPA routing fallback (no “Page not found” on refresh/deep links)
 - Sets `NODE_VERSION=20`
+- Sets `VITE_API_BASE_URL` to the Render backend (`https://jokefactory-be.onrender.com`) by default
 
 ### Deploy steps
 - In Netlify: **Build command** = `npm run build`
@@ -73,8 +79,8 @@ This repo includes `netlify.toml` and `public/_redirects`:
 - **Base directory** = empty (repo root)
 
 ### Environment variables (Netlify)
-- **(Optional) Connect to real backend**: set `VITE_API_BASE_URL`
-  - If set, the frontend will call your backend.
-  - If not set, the frontend will use the built-in **Mock API** automatically in production.
+- **Backend URL**: `VITE_API_BASE_URL` defaults to the Render API (`https://jokefactory-be.onrender.com`) via `netlify.toml`.
+  - Override it in the Netlify UI if you deploy a different backend.
+- **Use mock API instead**: remove or override `VITE_API_BASE_URL` and set `VITE_USE_MOCK_API=true`.
 
 
