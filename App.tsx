@@ -8,6 +8,10 @@ import Instructor from './views/Instructor';
 import { Button } from './components';
 import { Loader2, Bug } from 'lucide-react';
 
+const showDebugPanel =
+  import.meta.env.DEV ||
+  String(import.meta.env.VITE_ENABLE_DEBUG_PANEL ?? '').toLowerCase() === 'true';
+
 const DebugPanel: React.FC = () => {
     const { login, updateUser, user } = useGame();
     const [isOpen, setIsOpen] = useState(false);
@@ -240,7 +244,7 @@ const App: React.FC = () => {
   return (
     <GameProvider>
       <GameRouter />
-      <DebugPanel />
+      {showDebugPanel && <DebugPanel />}
     </GameProvider>
   );
 };
