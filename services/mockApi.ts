@@ -476,24 +476,122 @@ function route(
       return ok(resp, 200);
     }
 
+    const deleteUserMatch = sub.match(/^\/users\/(\d+)$/);
+    if (method === 'DELETE' && deleteUserMatch) {
+      const user_id = Number(deleteUserMatch[1]) as UserId;
+      const p = db.participants[String(user_id)];
+      if (!p) return err(404, 'NOT_FOUND', 'User not found.');
+      const a = db.assignments[String(user_id)] ?? { role: null, team_id: null };
+      if (a.role === 'INSTRUCTOR') return err(409, 'CONFLICT', 'Cannot delete instructor.');
+
+      delete db.participants[String(user_id)];
+      delete db.assignments[String(user_id)];
+
+      // Clean up purchases made by this user (best-effort)
+      for (const [pid, pur] of Object.entries(db.purchases)) {
+        if (pur.buyer_user_id === user_id) {
+          delete db.purchases[pid];
+        }
+      }
+      // Rebuild purchaseIndex (cheap and safe)
+      db.purchaseIndex = {};
+      for (const pur of Object.values(db.purchases)) {
+        db.purchaseIndex[`${pur.round_id}:${pur.buyer_user_id}:${pur.joke_id}`] = pur.purchase_id;
+      }
+
+      persistDb(db);
+      return ok({ deleted_user_id: user_id }, 200);
+    }
+
     if (method === 'GET' && sub === '/stats') {
       const teamsStats = db.teams
-        .map(t => {
-          const stats = computeTeamStats(db, t.id);
-          return {
-            team: t,
-            points: stats.points,
-            total_sales: stats.total_sales,
-            batches_rated: stats.batches_rated,
-            avg_score_overall: stats.avg_score_overall,
-            accepted_jokes: stats.accepted_jokes,
-          };
-        })
+        .map(t => ({ team: t, ...computeTeamStats(db, t.id) }))
         .sort((a, b) => b.points - a.points);
+
+      const teamNameById = new Map<TeamId, string>(db.teams.map(t => [t.id, t.name]));
+
+      const ratedBatches = Object.values(db.batches).filter(b => b.round_id === round_id && b.status === 'RATED');
+      const allBatches = Object.values(db.batches).filter(b => b.round_id === round_id);
+
+      // Cumulative sales events: one event per purchase (count-based in mock mode).
+      const purchases = Object.values(db.purchases)
+        .filter(p => p.round_id === round_id && !p.returned_at)
+        .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+
+      const runningSales: Record<string, number> = {};
+      const cumulative_sales: ApiInstructorStatsResponse['cumulative_sales'] = purchases.map((p, idx) => {
+        const key = String(p.team_id);
+        runningSales[key] = (runningSales[key] ?? 0) + 1;
+        return {
+          event_index: idx + 1,
+          timestamp: p.created_at,
+          team_id: p.team_id,
+          team_name: teamNameById.get(p.team_id) || `Team ${p.team_id}`,
+          total_sales: runningSales[key],
+        };
+      });
+
+      const batch_quality_by_size: ApiInstructorStatsResponse['batch_quality_by_size'] = ratedBatches.map(b => ({
+        batch_id: b.batch_id,
+        team_id: b.team_id,
+        team_name: teamNameById.get(b.team_id) || `Team ${b.team_id}`,
+        submitted_at: b.submitted_at,
+        batch_size: b.jokes.length,
+        avg_score: b.avg_score ?? 0,
+      }));
+
+      const learning_curve: ApiInstructorStatsResponse['learning_curve'] = db.teams.flatMap(t => {
+        const teamRated = ratedBatches
+          .filter(b => b.team_id === t.id)
+          .sort((a, b) => Date.parse(a.submitted_at) - Date.parse(b.submitted_at));
+        return teamRated.map((b, i) => ({
+          team_id: t.id,
+          team_name: t.name,
+          batch_order: i + 1,
+          avg_score: b.avg_score ?? 0,
+        }));
+      });
+
+      const ratedJokesByTeam: Record<string, number> = {};
+      ratedBatches.forEach(b => {
+        ratedJokesByTeam[String(b.team_id)] = (ratedJokesByTeam[String(b.team_id)] ?? 0) + b.jokes.length;
+      });
+
+      const totalJokesByTeam: Record<string, number> = {};
+      allBatches.forEach(b => {
+        totalJokesByTeam[String(b.team_id)] = (totalJokesByTeam[String(b.team_id)] ?? 0) + b.jokes.length;
+      });
+
+      const output_vs_rejection: ApiInstructorStatsResponse['output_vs_rejection'] = db.teams.map(t => {
+        const rated_jokes = ratedJokesByTeam[String(t.id)] ?? 0;
+        const accepted_jokes = computeTeamStats(db, t.id).accepted_jokes;
+        const rejection_rate = rated_jokes > 0 ? Math.max(0, (rated_jokes - accepted_jokes) / rated_jokes) : 0;
+        return {
+          team_id: t.id,
+          team_name: t.name,
+          total_jokes: totalJokesByTeam[String(t.id)] ?? 0,
+          rated_jokes,
+          accepted_jokes,
+          rejection_rate,
+        };
+      });
+
+      const revenue_vs_acceptance: ApiInstructorStatsResponse['revenue_vs_acceptance'] = db.teams.map(t => {
+        const rated_jokes = ratedJokesByTeam[String(t.id)] ?? 0;
+        const s = computeTeamStats(db, t.id);
+        const acceptance_rate = rated_jokes > 0 ? Math.max(0, s.accepted_jokes / rated_jokes) : 0;
+        return {
+          team_id: t.id,
+          team_name: t.name,
+          total_sales: s.total_sales,
+          accepted_jokes: s.accepted_jokes,
+          acceptance_rate,
+        };
+      });
 
       const resp: ApiInstructorStatsResponse = {
         round_id,
-        teams: teamsStats.map((t, idx) => ({
+        leaderboard: teamsStats.map((t, idx) => ({
           rank: idx + 1,
           team: t.team,
           points: t.points,
@@ -502,6 +600,11 @@ function route(
           avg_score_overall: t.avg_score_overall,
           accepted_jokes: t.accepted_jokes,
         })),
+        cumulative_sales,
+        batch_quality_by_size,
+        learning_curve,
+        output_vs_rejection,
+        revenue_vs_acceptance,
       };
       return ok(resp, 200);
     }

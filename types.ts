@@ -315,6 +315,10 @@ export interface ApiInstructorStatsResponse {
   }>;
 }
 
+export interface ApiInstructorDeleteUserResponse {
+  deleted_user_id: UserId;
+}
+
 export interface ApiTeamsResponse {
   teams: Team[];
 }

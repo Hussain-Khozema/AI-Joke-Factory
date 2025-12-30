@@ -165,7 +165,12 @@ function normalizeInstructorStats(raw: any): ApiInstructorStatsResponse {
     id: Number(t?.id ?? t?.ID ?? 0) as TeamId,
     name: String(t?.name ?? t?.Name ?? `Team ${t?.id ?? t?.ID ?? ''}`),
   });
-  const leaderboard = Array.isArray(data.leaderboard ?? data.Leaderboard) ? (data.leaderboard ?? data.Leaderboard) : [];
+  // Backend variants: some implementations return `leaderboard`, others return `teams`.
+  const leaderboard = Array.isArray(data.leaderboard ?? data.Leaderboard)
+    ? (data.leaderboard ?? data.Leaderboard)
+    : Array.isArray(data.teams ?? data.Teams)
+      ? (data.teams ?? data.Teams)
+      : [];
   const normLeaderboard = leaderboard.map((item: any) => ({
     rank: Number(item.rank ?? item.Rank ?? 0),
     team: normalizeTeam(item.team ?? item.Team ?? {}),
@@ -284,6 +289,7 @@ interface GameContextType {
   teamNames: Record<string, string>;
   updateTeamName: (teamNum: string, name: string) => void;
   updateUser: (userId: string, updates: Partial<User>) => Promise<void>;
+  deleteUser: (userId: string) => Promise<void>;
 
   batches: Batch[];
   addBatch: (jokes: string[]) => Promise<void>;
@@ -403,12 +409,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           try {
             const rawLobby = await instructorService.lobby(effectiveRoundId);
             let stats: any = null;
-            if (config.isActive) {
-              try {
-                stats = await instructorService.stats(effectiveRoundId);
-              } catch {
-                // ignore stats failures when round not active or backend not ready
-              }
+            try {
+              // Stats availability is backend-dependent; if unavailable, keep lobby data.
+              stats = await instructorService.stats(effectiveRoundId);
+            } catch {
+              // ignore stats failures when backend not ready / no data yet
             }
 
             if (!cancelled) {
@@ -524,16 +529,19 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         const activePayload: any = active as any;
         const activeRound = (activePayload?.data?.round ?? active.round) as any;
-        const roundNumber = activeRound?.round_number ?? 1;
+        const apiRoundNumber = activeRound?.round_number as number | undefined;
         const normalizedStatus = normalizeRoundStatus(activeRound?.status) ?? 'CONFIGURED';
         const isActive = normalizedStatus === 'ACTIVE';
 
         setConfig(prev => {
+          const baseRound = apiRoundNumber ?? prev.round ?? 1;
+          // Auto-advance UI: after Round 1 is ENDED, default to Round 2 even before it becomes ACTIVE.
+          const nextRound = normalizedStatus === 'ENDED' && baseRound === 1 ? 2 : baseRound;
           const elapsed = isActive && activeRound?.started_at ? Math.max(0, Math.floor((nowMs() - Date.parse(activeRound.started_at)) / 1000)) : prev.elapsedTime;
           return {
             ...prev,
-            status: isActive ? 'PLAYING' : 'LOBBY',
-            round: roundNumber,
+            status: isActive ? 'PLAYING' : (normalizedStatus === 'ENDED' ? 'PLAYING' : 'LOBBY'),
+            round: nextRound,
             isActive,
             startTime: isActive && activeRound?.started_at ? Date.parse(activeRound.started_at) : null,
             elapsedTime: elapsed,
@@ -548,7 +556,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           try {
             const rawLobby = await instructorService.lobby(me.round_id);
             let stats: any = null;
-            if (config.isActive) {
+            // NOTE: do not depend on React state `config` here; this polling closure
+            // does not re-bind on config changes. Use the freshly computed round status
+            // from this poll cycle (isActive / normalizedStatus).
+            if (isActive || normalizedStatus === 'ENDED') {
               try {
                 stats = await instructorService.stats(me.round_id);
               } catch {
@@ -915,6 +926,44 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const deleteUser = async (userId: string) => {
+    if (!roundId) return;
+    if (!user || user.role !== ('INSTRUCTOR' as Role)) return;
+    const uid = Number(userId);
+    if (!Number.isFinite(uid)) return;
+
+    try {
+      await instructorService.deleteUser(roundId, uid as UserId);
+      // Optimistic removal; poll will re-sync.
+      setRoster(prev => prev.filter(u => Number(u.id) !== uid));
+      setInstructorLobby(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          teams: prev.teams.map(t => ({ ...t, members: t.members.filter(m => m.user_id !== (uid as UserId)) })),
+          customers: prev.customers.filter(c => c.user_id !== (uid as UserId)),
+          unassigned: prev.unassigned.filter(u => u.user_id !== (uid as UserId)),
+        };
+      });
+    } catch (e) {
+      if (e instanceof ApiError) {
+        if (e.status === 404) {
+          alert('User not found (may have already been deleted).');
+          return;
+        }
+        if (e.status === 409) {
+          alert('Cannot delete an instructor account.');
+          return;
+        }
+        if (e.status === 400) {
+          alert('Invalid user id.');
+          return;
+        }
+      }
+      alert('Failed to delete user.');
+    }
+  };
+
   const addBatch = async (jokeContents: string[]) => {
     if (!user || !roundId || !user.team_id) return;
 
@@ -1143,12 +1192,19 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     try {
       if (isActive) {
+        const batch_size = config.round === 2 ? config.round2BatchLimit : config.round1BatchSize;
         await instructorService.start(roundId, {
           customer_budget: config.customerBudget,
-          batch_size: config.round1BatchSize,
+          batch_size,
         });
       }
-      setConfig(prev => ({ ...prev, isActive }));
+      setConfig(prev => ({
+        ...prev,
+        isActive,
+        status: 'PLAYING',
+        startTime: isActive ? Date.now() : prev.startTime,
+        elapsedTime: isActive ? 0 : prev.elapsedTime,
+      }));
     } catch {
       alert('Failed to start round.');
     }
@@ -1159,7 +1215,29 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!roundId || !user || user.role !== ('INSTRUCTOR' as Role)) return;
     try {
       await instructorService.end(roundId);
-      setConfig(prev => ({ ...prev, isActive: false, status: 'LOBBY' }));
+      setConfig(prev => {
+        // Auto-advance: after ending Round 1, default the UI to Round 2 and keep teams.
+        if (prev.round === 1) {
+          if (isMockModeEnabled()) {
+            try {
+              setMockRoundNumber(2);
+            } catch {
+              // ignore
+            }
+          }
+          return {
+            ...prev,
+            round: 2,
+            isActive: false,
+            status: 'PLAYING',
+            startTime: null,
+            elapsedTime: 0,
+          };
+        }
+
+        // After ending Round 2, go back to lobby.
+        return { ...prev, isActive: false, status: 'LOBBY', startTime: null, elapsedTime: 0 };
+      });
     } catch {
       alert('Failed to end round.');
     }
@@ -1183,7 +1261,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user, login, instructorLogin, logout, roster,
       config, updateConfig, setRound, setGameActive, endRound, resetGame, toggleTeamPopup,
       calculateValidCustomerOptions, formTeams, resetToLobby,
-      teamNames, updateTeamName, updateUser,
+      teamNames, updateTeamName, updateUser, deleteUser,
       batches, addBatch, rateBatch,
       sales, buyJoke, returnJoke,
       roundId,

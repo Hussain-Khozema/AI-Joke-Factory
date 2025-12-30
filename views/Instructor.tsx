@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useGame } from '../context';
 import { Button, Card, RoleLayout, Modal } from '../components';
-import { Play, Pause, RefreshCw, Settings, Clock, StopCircle, GripVertical, Users, CheckCircle, Maximize2 } from 'lucide-react';
+import { Play, Pause, RefreshCw, Settings, Clock, StopCircle, GripVertical, Users, CheckCircle, Maximize2, X, Trash2 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   LineChart, Line, ScatterChart, Scatter, Legend
@@ -40,6 +40,10 @@ const CustomScatterTooltip = ({ active, payload }: any) => {
   return null;
 };
 
+const INSTRUCTOR_HIDDEN_CHARTS_SESSION_KEY = 'joke_factory_instructor_hidden_charts_v1';
+const CHART_KEYS = ['revenue', 'leaderboard', 'sales', 'quality', 'learning', 'misalignment'] as const;
+type ChartKey = typeof CHART_KEYS[number];
+
 const Instructor: React.FC = () => {
   const { 
     config, updateConfig, setGameActive, setRound, resetGame, toggleTeamPopup,
@@ -47,6 +51,7 @@ const Instructor: React.FC = () => {
     calculateValidCustomerOptions, formTeams, resetToLobby
     , instructorStats
     , endRound
+    , deleteUser
   } = useGame();
 
   const [localBatchSize, setLocalBatchSize] = useState(config.round1BatchSize);
@@ -57,11 +62,67 @@ const Instructor: React.FC = () => {
   // Expanded Chart State
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
 
+  // Session-only chart visibility (defaults back on new browser session)
+  const [hiddenCharts, setHiddenCharts] = useState<ChartKey[]>([]);
+  const [deletingUserIds, setDeletingUserIds] = useState<string[]>([]);
+
+  const handleDeleteUser = async (userId: string, displayName?: string) => {
+    const label = displayName ? `${displayName} (${userId})` : `user ${userId}`;
+    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
+    setDeletingUserIds(prev => (prev.includes(userId) ? prev : [...prev, userId]));
+    try {
+      await deleteUser(userId);
+    } finally {
+      setDeletingUserIds(prev => prev.filter(id => id !== userId));
+    }
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.sessionStorage.getItem(INSTRUCTOR_HIDDEN_CHARTS_SESSION_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return;
+      const filtered = parsed.filter((k: any): k is ChartKey =>
+        (CHART_KEYS as readonly string[]).includes(String(k))
+      ) as ChartKey[];
+      setHiddenCharts(filtered);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (hiddenCharts.length === 0) {
+        window.sessionStorage.removeItem(INSTRUCTOR_HIDDEN_CHARTS_SESSION_KEY);
+      } else {
+        window.sessionStorage.setItem(INSTRUCTOR_HIDDEN_CHARTS_SESSION_KEY, JSON.stringify(hiddenCharts));
+      }
+    } catch {
+      // ignore
+    }
+  }, [hiddenCharts]);
+
+  const isChartHidden = (key: ChartKey) => hiddenCharts.includes(key);
+
+  const hideChart = (key: ChartKey) => {
+    setHiddenCharts(prev => (prev.includes(key) ? prev : [...prev, key]));
+    if (expandedChart === key) setExpandedChart(null);
+  };
+
+  const restoreAllCharts = () => setHiddenCharts([]);
+
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
+
+  const hasPendingConfigChanges =
+    localBatchSize !== config.round1BatchSize || localBudget !== config.customerBudget;
 
   const handleUpdateSettings = () => {
     updateConfig({ round1BatchSize: localBatchSize, customerBudget: localBudget });
@@ -402,7 +463,7 @@ const Instructor: React.FC = () => {
                    variant={config.isActive ? 'secondary' : 'success'}
                    className="w-32 flex justify-center items-center gap-2"
                  >
-                   {config.isActive ? <><Pause size={16} /> Pause</> : <><Play size={16} /> Start</>}
+                  {config.isActive ? <><Pause size={16} /> Pause</> : <><Play size={16} /> Start</>}
                  </Button>
                  
                  <Button 
@@ -456,7 +517,7 @@ const Instructor: React.FC = () => {
                    className="w-16 p-1 border border-gray-300 rounded text-center bg-white text-black"
                  />
                </div>
-               <div className="flex items-center space-x-2">
+               <div className="flex items-center gap-2">
                  <label className="text-sm text-gray-600">Cust. Budget:</label>
                  <input 
                    type="number" 
@@ -464,34 +525,76 @@ const Instructor: React.FC = () => {
                    onChange={e => setLocalBudget(Number(e.target.value))}
                    className="w-16 p-1 border border-gray-300 rounded text-center bg-white text-black"
                  />
-                 <button onClick={handleUpdateSettings} className="text-blue-600 text-xs font-bold underline ml-2">Apply</button>
+                 <Button
+                   type="button"
+                   onClick={handleUpdateSettings}
+                   variant="secondary"
+                   disabled={!hasPendingConfigChanges}
+                   className={
+                     `ml-5 px-4 py-1 text-xs font-semibold transition-colors ` +
+                     (hasPendingConfigChanges
+                       ? 'bg-amber-100 text-amber-900 hover:bg-amber-200 ring-2 ring-amber-200'
+                       : 'opacity-60')
+                   }
+                 >
+                   Apply
+                 </Button>
                </div>
             </div>
           </div>
         </Card>
 
         {/* Dashboard Charts */}
+        {hiddenCharts.length > 0 && (
+          <div className="flex justify-end">
+            <button
+              onClick={restoreAllCharts}
+              className="text-xs font-bold text-blue-600 underline hover:text-blue-700"
+              title="Restore all charts for this session"
+            >
+              Show all charts
+            </button>
+          </div>
+        )}
+
+        {!instructorStats && (
+          <div className="text-sm text-gray-500">
+            Charts will appear once instructor stats are available. If you’re expecting data but see nothing, make sure
+            you’re running in backend mode (set <code className="px-1 py-0.5 bg-gray-100 rounded">VITE_API_BASE_URL</code>)
+            and that the round has started / produced events.
+          </div>
+        )}
+
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
           
           {/* Chart 1: Revenue vs Acceptance */}
-          <Card 
-            title="Revenue vs Acceptance"
-            action={<button onClick={() => setExpandedChart('revenue')} className="p-1 hover:bg-gray-100 rounded text-gray-500"><Maximize2 size={18} /></button>}
-          >
-             <div className="h-72 w-full">
-               {renderChart('revenue')}
-             </div>
-          </Card>
-
-          {/* Leaderboard */}
-          <Card 
-            title="Leaderboard"
-            action={<button onClick={() => setExpandedChart('leaderboard')} className="p-1 hover:bg-gray-100 rounded text-gray-500"><Maximize2 size={18} /></button>}
-          >
-             <div className="h-72 w-full">
-               {renderChart('leaderboard')}
-             </div>
-          </Card>
+          {!isChartHidden('revenue') && (
+            <Card 
+              title="Revenue vs Acceptance"
+              action={
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setExpandedChart('revenue')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
+                    title="Expand chart"
+                  >
+                    <Maximize2 size={18} />
+                  </button>
+                  <button
+                    onClick={() => hideChart('revenue')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600"
+                    title="Hide chart (this session only)"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              }
+            >
+              <div className="h-72 w-full">
+                {renderChart('revenue')}
+              </div>
+            </Card>
+          )}
 
           {/* Widget 2: Team Management */}
           <Card title="Team Management (Drag to Move, Click to Switch Role)">
@@ -534,6 +637,23 @@ const Instructor: React.FC = () => {
                               <GripVertical size={10} className="mr-1 opacity-50" />
                               <span className="font-bold">{u.name}</span>
                               <span className="ml-1 opacity-70">({u.role === Role.JOKE_MAKER ? 'JM' : 'QC'})</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  handleDeleteUser(u.id, u.name);
+                                }}
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                }}
+                                disabled={deletingUserIds.includes(u.id)}
+                                className="ml-2 p-1 rounded hover:bg-white/60 text-gray-500 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="Delete user"
+                              >
+                                <Trash2 size={14} />
+                              </button>
                             </div>
                           )) || <span className="text-gray-400 italic">No members. Drag users here.</span>}
                         </div>
@@ -549,7 +669,7 @@ const Instructor: React.FC = () => {
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-2">
                         {roster.filter(u => u.role === Role.CUSTOMER).map(u => (
-                           <span 
+                           <div 
                              key={u.id} 
                              draggable
                              onDragStart={(e) => handleDragStart(e, u.id)}
@@ -557,7 +677,24 @@ const Instructor: React.FC = () => {
                            >
                              <GripVertical size={10} className="mr-1 opacity-50" />
                              {u.name}
-                           </span>
+                             <button
+                               type="button"
+                               onClick={(e) => {
+                                 e.preventDefault();
+                                 e.stopPropagation();
+                                 handleDeleteUser(u.id, u.name);
+                               }}
+                               onMouseDown={(e) => {
+                                 e.preventDefault();
+                                 e.stopPropagation();
+                               }}
+                               disabled={deletingUserIds.includes(u.id)}
+                               className="ml-2 p-1 rounded hover:bg-white/60 text-amber-700/70 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                               title="Delete user"
+                             >
+                               <Trash2 size={14} />
+                             </button>
+                           </div>
                         ))}
                         {roster.filter(u => u.role === Role.CUSTOMER).length === 0 && <span className="text-gray-400 text-xs italic">Drag users here to make them Customers</span>}
                       </div>
@@ -572,7 +709,7 @@ const Instructor: React.FC = () => {
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-2">
                         {roster.filter(u => u.role === Role.UNASSIGNED).map(u => (
-                           <span 
+                           <div 
                              key={u.id} 
                              draggable
                              onDragStart={(e) => handleDragStart(e, u.id)}
@@ -580,7 +717,24 @@ const Instructor: React.FC = () => {
                            >
                              <GripVertical size={10} className="mr-1 opacity-50" />
                              {u.name}
-                           </span>
+                             <button
+                               type="button"
+                               onClick={(e) => {
+                                 e.preventDefault();
+                                 e.stopPropagation();
+                                 handleDeleteUser(u.id, u.name);
+                               }}
+                               onMouseDown={(e) => {
+                                 e.preventDefault();
+                                 e.stopPropagation();
+                               }}
+                               disabled={deletingUserIds.includes(u.id)}
+                               className="ml-2 p-1 rounded hover:bg-white/60 text-gray-600 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                               title="Delete user"
+                             >
+                               <Trash2 size={14} />
+                             </button>
+                           </div>
                         ))}
                         {roster.filter(u => u.role === Role.UNASSIGNED).length === 0 && <span className="text-gray-400 text-xs italic">All users assigned</span>}
                       </div>
@@ -591,45 +745,151 @@ const Instructor: React.FC = () => {
             </div>
           </Card>
           
-          {/* Chart 2: Cumulative Sales */}
-          <Card 
-            title="Cumulative Sales Over Time"
-            action={<button onClick={() => setExpandedChart('sales')} className="p-1 hover:bg-gray-100 rounded text-gray-500"><Maximize2 size={18} /></button>}
-          >
-             <div className="h-72 w-full">
-               {renderChart('sales')}
-             </div>
-          </Card>
+          {/* Leaderboard */}
+          {!isChartHidden('leaderboard') && (
+            <Card 
+              title="Leaderboard"
+              action={
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setExpandedChart('leaderboard')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
+                    title="Expand chart"
+                  >
+                    <Maximize2 size={18} />
+                  </button>
+                  <button
+                    onClick={() => hideChart('leaderboard')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600"
+                    title="Hide chart (this session only)"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              }
+            >
+              <div className="h-72 w-full">
+                {renderChart('leaderboard')}
+              </div>
+            </Card>
+          )}
+
+
+          {/* Chart 2/3: Cumulative Sales */}
+          {!isChartHidden('sales') && (
+            <Card 
+              title="Cumulative Sales Over Time"
+              action={
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setExpandedChart('sales')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
+                    title="Expand chart"
+                  >
+                    <Maximize2 size={18} />
+                  </button>
+                  <button
+                    onClick={() => hideChart('sales')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600"
+                    title="Hide chart (this session only)"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              }
+            >
+              <div className="h-72 w-full">
+                {renderChart('sales')}
+              </div>
+            </Card>
+          )}
 
           {/* Chart 3: Batch Size vs Quality */}
-          <Card 
-            title="Batch Size vs Average Quality"
-            action={<button onClick={() => setExpandedChart('quality')} className="p-1 hover:bg-gray-100 rounded text-gray-500"><Maximize2 size={18} /></button>}
-          >
-             <div className="h-72 w-full">
-               {renderChart('quality')}
-             </div>
-          </Card>
+          {!isChartHidden('quality') && (
+            <Card 
+              title="Batch Size vs Average Quality"
+              action={
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setExpandedChart('quality')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
+                    title="Expand chart"
+                  >
+                    <Maximize2 size={18} />
+                  </button>
+                  <button
+                    onClick={() => hideChart('quality')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600"
+                    title="Hide chart (this session only)"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              }
+            >
+              <div className="h-72 w-full">
+                {renderChart('quality')}
+              </div>
+            </Card>
+          )}
 
           {/* Chart 4: Learning Curve */}
-          <Card 
-            title="Learning Curve: Quality by Batch Order"
-            action={<button onClick={() => setExpandedChart('learning')} className="p-1 hover:bg-gray-100 rounded text-gray-500"><Maximize2 size={18} /></button>}
-          >
-             <div className="h-72 w-full">
-               {renderChart('learning')}
-             </div>
-          </Card>
+          {!isChartHidden('learning') && (
+            <Card 
+              title="Learning Curve: Quality by Batch Order"
+              action={
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setExpandedChart('learning')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
+                    title="Expand chart"
+                  >
+                    <Maximize2 size={18} />
+                  </button>
+                  <button
+                    onClick={() => hideChart('learning')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600"
+                    title="Hide chart (this session only)"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              }
+            >
+              <div className="h-72 w-full">
+                {renderChart('learning')}
+              </div>
+            </Card>
+          )}
 
            {/* Chart 5: Process Misalignment */}
-           <Card 
-             title="JM Output vs QC Rejection Rate"
-             action={<button onClick={() => setExpandedChart('misalignment')} className="p-1 hover:bg-gray-100 rounded text-gray-500"><Maximize2 size={18} /></button>}
-           >
-             <div className="h-72 w-full">
-               {renderChart('misalignment')}
-             </div>
-          </Card>
+          {!isChartHidden('misalignment') && (
+            <Card 
+              title="JM Output vs QC Rejection Rate"
+              action={
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setExpandedChart('misalignment')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
+                    title="Expand chart"
+                  >
+                    <Maximize2 size={18} />
+                  </button>
+                  <button
+                    onClick={() => hideChart('misalignment')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600"
+                    title="Hide chart (this session only)"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              }
+            >
+              <div className="h-72 w-full">
+                {renderChart('misalignment')}
+              </div>
+            </Card>
+          )}
 
         </div>
       </div>

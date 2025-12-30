@@ -2,6 +2,7 @@ import { apiRequest } from './apiClient';
 import type {
   ApiInstructorLobbyResponse,
   ApiInstructorStatsResponse,
+  ApiInstructorDeleteUserResponse,
   ApiInstructorLoginRequest,
   ApiInstructorLoginResponse,
   RoundId,
@@ -32,6 +33,10 @@ export const instructorService = {
     body: { status?: 'WAITING' | 'ASSIGNED'; role?: 'INSTRUCTOR' | 'JM' | 'QC' | 'CUSTOMER'; team_id?: TeamId | null },
   ): Promise<void> {
     return apiRequest<void>(`/v1/instructor/rounds/${round_id}/users/${user_id}`, { method: 'PATCH', body });
+  },
+
+  deleteUser(round_id: RoundId, user_id: UserId): Promise<ApiInstructorDeleteUserResponse> {
+    return apiRequest<ApiInstructorDeleteUserResponse>(`/v1/instructor/rounds/${round_id}/users/${user_id}`, { method: 'DELETE' });
   },
 
   start(round_id: RoundId, body: { customer_budget: number; batch_size: number }): Promise<void> {
