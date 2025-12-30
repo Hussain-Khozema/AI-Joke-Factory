@@ -53,6 +53,8 @@ type MockRound = {
   batch_size: number;
   customer_budget: number;
   started_at: string | null;
+  ended_at: string | null;
+  is_popped_active?: boolean;
 };
 
 type MockBatch = {
@@ -125,6 +127,8 @@ function loadDb(): MockDb {
     batch_size: 5,
     customer_budget: 10,
     started_at: null,
+    ended_at: null,
+    is_popped_active: false,
   };
 
   const db: MockDb = {
@@ -343,7 +347,6 @@ function route(
 
     const resp: ApiSessionJoinResponse = {
       user: { user_id, display_name },
-      round_id: db.active_round_id,
       participant: {
         status: participant.status,
         joined_at: participant.joined_at,
@@ -371,16 +374,20 @@ function route(
 
   if (method === 'GET' && path === '/v1/rounds/active') {
     const resp: ApiActiveRoundResponse = {
-      round: db.round
-        ? {
-            id: db.round.id,
-            round_number: db.round.round_number,
-            status: db.round.status,
-            batch_size: db.round.batch_size,
-            customer_budget: db.round.customer_budget,
-            started_at: db.round.started_at,
-          }
-        : null,
+      rounds: db.round
+        ? [
+            {
+              id: db.round.id,
+              round_number: db.round.round_number,
+              status: db.round.status,
+              batch_size: db.round.batch_size,
+              customer_budget: db.round.customer_budget,
+              started_at: db.round.started_at,
+              ended_at: db.round.ended_at,
+              is_popped_active: db.round.is_popped_active ?? false,
+            },
+          ]
+        : [],
     };
     return ok(resp, 200);
   }
@@ -651,12 +658,16 @@ function route(
     if (method === 'POST' && sub === '/start') {
       db.round.status = 'ACTIVE';
       db.round.started_at = isoNow();
+      db.round.ended_at = null;
+      db.round.is_popped_active = true;
       persistDb(db);
       return ok(undefined, 204);
     }
 
     if (method === 'POST' && sub === '/end') {
       db.round.status = 'ENDED';
+      db.round.ended_at = isoNow();
+      db.round.is_popped_active = false;
       persistDb(db);
       return ok(undefined, 204);
     }

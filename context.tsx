@@ -483,10 +483,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return;
         }
 
-        const [me, active] = await Promise.all([sessionService.me(), sessionService.activeRound()]);
+        const me = await sessionService.me();
         if (cancelled) return;
 
-        setRoundId(me.round_id);
+        // Determine effective round id from session/me or active round fallback.
+        // Some backends may omit round_id from /session/me; use active round id if present.
+        const effectiveRoundIdFromMe = me.round_id ?? null;
 
         let role = toRole(me.assignment.role);
         // Only demote to UNASSIGNED when participant is waiting and not an instructor.
@@ -527,10 +529,38 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return same ? prev : { ...prev, ...nextUser };
         });
 
+        // If user is still unassigned, skip rounds/active call to avoid noise in waiting room.
+        if (role === ('UNASSIGNED' as Role)) {
+          setConfig(prev => ({
+            ...prev,
+            status: 'LOBBY',
+            isActive: false,
+            startTime: null,
+            elapsedTime: 0,
+          }));
+          return;
+        }
+
+        const active = await sessionService.activeRound();
+        if (cancelled) return;
+
         const activePayload: any = active as any;
-        const activeRound = (activePayload?.data?.round ?? active.round) as any;
+        const rounds = Array.isArray(activePayload?.data?.rounds ?? active.rounds)
+          ? (activePayload?.data?.rounds ?? active.rounds)
+          : [];
+        const pickStatus = (r: any) => normalizeRoundStatus(r?.status);
+        const activeRound = rounds.find(r => pickStatus(r) === 'ACTIVE') ?? rounds[0] ?? null;
+        const effectiveRoundId =
+          (activeRound?.id as RoundId | undefined) ??
+          effectiveRoundIdFromMe ??
+          roundId;
+        if (effectiveRoundId && effectiveRoundId !== roundId) {
+          setRoundId(effectiveRoundId);
+        } else if (effectiveRoundIdFromMe && roundId == null) {
+          setRoundId(effectiveRoundIdFromMe);
+        }
         const apiRoundNumber = activeRound?.round_number as number | undefined;
-        const normalizedStatus = normalizeRoundStatus(activeRound?.status) ?? 'CONFIGURED';
+        const normalizedStatus = pickStatus(activeRound) ?? 'CONFIGURED';
         const isActive = normalizedStatus === 'ACTIVE';
 
         setConfig(prev => {
@@ -631,10 +661,15 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // ignore; instructor endpoints will surface errors on action
           }
         } else if (role === ('JOKE_MAKER' as Role) && me.assignment.team_id) {
+          const effectiveRound = effectiveRoundId ?? me.round_id ?? null;
+          if (!effectiveRound) {
+            // cannot fetch team data without round id; wait for next poll
+            return;
+          }
           try {
             const [summaryRaw, listRaw] = await Promise.all([
-              jmService.teamSummary(me.round_id, me.assignment.team_id),
-              jmService.listTeamBatches(me.round_id, me.assignment.team_id),
+              jmService.teamSummary(effectiveRound, me.assignment.team_id),
+              jmService.listTeamBatches(effectiveRound, me.assignment.team_id),
             ]);
             if (!cancelled) {
               const summaryData: any = (summaryRaw as any)?.data ?? summaryRaw;
@@ -642,6 +677,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               const batchesArr: any[] = Array.isArray(listData?.batches) ? listData.batches : [];
 
               setTeamSummary(summaryData as any);
+              const roundNumber = config.round ?? 1;
               const mapped = batchesArr.map(b =>
                 mapBatchFromTeamList(
                   roundNumber,
@@ -665,10 +701,15 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // teammates modal removed; keep roster minimal (self only)
           setRoster([nextUser]);
         } else if (role === ('QUALITY_CONTROL' as Role)) {
+          const effectiveRound = effectiveRoundId ?? me.round_id ?? null;
+          if (!effectiveRound) {
+            setQcQueue(null);
+            return;
+          }
           // QC queue (live work)
           let normalizedQueue: ApiQcQueueNextResponse | null = null;
           try {
-            const rawQ = await qcService.queueNext(me.round_id);
+            const rawQ = await qcService.queueNext(effectiveRound);
             const qAny: any = rawQ;
             const qData = (qAny?.data ?? qAny) as any;
             normalizedQueue = qData
@@ -687,7 +728,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const summaryTeamId = (normalizedQueue?.batch?.team_id ?? me.assignment?.team_id ?? null) as TeamId | null;
           if (summaryTeamId) {
             try {
-              const ts = await jmService.teamSummary(me.round_id, summaryTeamId);
+              const ts = await jmService.teamSummary(effectiveRound, summaryTeamId);
               if (!cancelled) {
                 setTeamSummary((ts as any)?.data ?? ts ?? null);
               }

@@ -134,7 +134,6 @@ export interface ApiSessionJoinRequest {
 
 export interface ApiSessionJoinResponse {
   user: ApiUser;
-  round_id: RoundId;
   participant: ApiParticipant;
 }
 
@@ -156,14 +155,16 @@ export interface ApiInstructorLoginResponse {
 }
 
 export interface ApiActiveRoundResponse {
-  round: {
+  rounds: Array<{
     id: RoundId;
     round_number: number;
-    status: string; // backend may return "Active"/"Ended" etc; we normalize in services
+    status: string; // backend may return "Active"/"Ended"/"Configured"; we normalize in services
     batch_size: number;
     customer_budget: number;
     started_at?: string | null;
-  } | null;
+    ended_at?: string | null;
+    is_popped_active?: boolean;
+  }>;
 }
 
 export interface ApiTeamSummaryResponse {
