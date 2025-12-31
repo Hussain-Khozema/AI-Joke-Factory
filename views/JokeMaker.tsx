@@ -1,15 +1,16 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useGame } from '../context';
 import { Button, Card, StatBox, RoleLayout, Modal } from '../components';
 import { Plus, Trash2, Send, CheckCircle, AlertCircle, MessageSquare } from 'lucide-react';
 import { Role, Batch } from '../types';
 
 const JokeMaker: React.FC = () => {
-  const { user, batches, addBatch, config, teamSummary } = useGame();
+  const { user, roster, batches, addBatch, config, teamSummary } = useGame();
   
   const [currentJokes, setCurrentJokes] = useState<string[]>([]);
   const [jokeInput, setJokeInput] = useState('');
   const [complianceChecked, setComplianceChecked] = useState(false);
+  const [dismissedTeamPopup, setDismissedTeamPopup] = useState(false);
   
   // Feedback Modal State
   const [feedbackBatch, setFeedbackBatch] = useState<Batch | null>(null);
@@ -66,8 +67,37 @@ const JokeMaker: React.FC = () => {
     return normalized.replace(/\b\w/g, c => c.toUpperCase());
   };
 
+  useEffect(() => {
+    // If instructor closes popups server-side, allow it to show again next time it opens.
+    if (!config.showTeamPopup) setDismissedTeamPopup(false);
+  }, [config.showTeamPopup]);
+
   return (
     <RoleLayout>
+      {/* Round 2: Team popup (backend-controlled via is_popped_active) */}
+      <Modal
+        isOpen={config.round === 2 && config.showTeamPopup && !dismissedTeamPopup}
+        onClose={() => setDismissedTeamPopup(true)}
+        title="Your Team"
+      >
+        <div className="space-y-2">
+          <p className="text-sm text-gray-600">
+            Your instructor has opened team popups. Here are your team members:
+          </p>
+          <div className="divide-y divide-gray-100 border border-gray-200 rounded">
+            {(roster.length ? roster : (user ? [user] : [])).map(m => (
+              <div key={m.id} className="flex items-center justify-between px-3 py-2">
+                <span className="font-medium text-gray-900">{m.name}</span>
+                <span className="text-xs font-bold text-gray-500">{m.role.replace('_', ' ')}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400">
+            You can close this popup locally; it will reappear next time the instructor opens it again.
+          </p>
+        </div>
+      </Modal>
+
       {/* QC Feedback Modal */}
       <Modal 
         isOpen={!!feedbackBatch} 

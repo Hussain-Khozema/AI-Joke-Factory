@@ -616,8 +616,8 @@ function route(
       return ok(resp, 200);
     }
 
-    if (method === 'PUT' && sub === '/config') {
-      const body = (opts.body ?? {}) as { customer_budget: number; batch_size: number };
+    if ((method === 'PUT' || method === 'POST') && sub === '/config') {
+      const body = (opts.body ?? {}) as { customer_budget: number; batch_size: number; is_popped_active?: boolean };
       const customer_budget = Number(body.customer_budget);
       const batch_size = Number(body.batch_size);
       if (!Number.isFinite(customer_budget) || !Number.isFinite(batch_size)) {
@@ -625,8 +625,28 @@ function route(
       }
       db.round.customer_budget = customer_budget;
       db.round.batch_size = batch_size;
+      if (typeof body.is_popped_active === 'boolean') {
+        db.round.is_popped_active = body.is_popped_active;
+      }
       persistDb(db);
-      return ok(undefined, 204);
+      return ok(
+        {
+          data: {
+            round: {
+              id: db.round.id,
+              round_number: db.round.round_number,
+              status: db.round.status,
+              customer_budget: db.round.customer_budget,
+              batch_size: db.round.batch_size,
+              started_at: db.round.started_at,
+              ended_at: db.round.ended_at,
+              created_at: isoNow(),
+              is_popped_active: db.round.is_popped_active ?? false,
+            },
+          },
+        },
+        200,
+      );
     }
 
     if (method === 'POST' && sub === '/assign') {

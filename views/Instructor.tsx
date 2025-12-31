@@ -8,15 +8,6 @@ import {
 } from 'recharts';
 import { Role } from '../types';
 
-interface TeamStat {
-  team: string;
-  batches: number;
-  totalScore: number;
-  accepted: number;
-  jokeCount: number;
-  revenue: number;
-}
-
 // Expanded Palette for more teams
 const PALETTE = [
     '#3B82F6', '#8B5CF6', '#10B981', '#F59E0B', '#EF4444', 
@@ -24,24 +15,8 @@ const PALETTE = [
     '#0EA5E9', '#A855F7', '#22C55E', '#EAB308', '#F43F5E'
 ];
 
-const CustomScatterTooltip = ({ active, payload }: any) => {
-  if (active && payload && payload.length) {
-    const data = payload[0].payload;
-    return (
-      <div className="bg-white p-3 border border-gray-200 shadow-md rounded text-sm z-50">
-        <p className="font-bold text-gray-800 border-b pb-1 mb-1">{data.name}</p>
-        <div className="space-y-1">
-            <p className="text-gray-600">Jokes Submitted: <span className="font-semibold text-blue-600">{data.output}</span></p>
-            <p className="text-gray-600">Rejection Rate: <span className="font-semibold text-red-500">{data.rejectionRate}%</span></p>
-        </div>
-      </div>
-    );
-  }
-  return null;
-};
-
 const INSTRUCTOR_HIDDEN_CHARTS_SESSION_KEY = 'joke_factory_instructor_hidden_charts_v1';
-const CHART_KEYS = ['revenue', 'leaderboard', 'sales', 'quality', 'learning', 'misalignment'] as const;
+const CHART_KEYS = ['sales', 'sequence_quality', 'size_quality'] as const;
 type ChartKey = typeof CHART_KEYS[number];
 
 const Instructor: React.FC = () => {
@@ -65,6 +40,10 @@ const Instructor: React.FC = () => {
   // Session-only chart visibility (defaults back on new browser session)
   const [hiddenCharts, setHiddenCharts] = useState<ChartKey[]>([]);
   const [deletingUserIds, setDeletingUserIds] = useState<string[]>([]);
+  const [leaderboardSortKey, setLeaderboardSortKey] = useState<
+    'team' | 'rated_batches' | 'accepted_jokes' | 'total_jokes' | 'avg_score_overall' | 'total_sales'
+  >('total_sales');
+  const [leaderboardSortDir, setLeaderboardSortDir] = useState<'asc' | 'desc'>('desc');
 
   const handleDeleteUser = async (userId: string, displayName?: string) => {
     const label = displayName ? `${displayName} (${userId})` : `user ${userId}`;
@@ -121,11 +100,22 @@ const Instructor: React.FC = () => {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  // Config edit rules:
+  // - While a round is active: config is not editable.
+  // - In round 2: only customer budget is editable.
+  const canEditBatchSize = !config.isActive && config.round === 1;
+  const canEditBudget = !config.isActive && (config.round === 1 || config.round === 2);
+
   const hasPendingConfigChanges =
-    localBatchSize !== config.round1BatchSize || localBudget !== config.customerBudget;
+    (canEditBatchSize && localBatchSize !== config.round1BatchSize) ||
+    (canEditBudget && localBudget !== config.customerBudget);
 
   const handleUpdateSettings = () => {
-    updateConfig({ round1BatchSize: localBatchSize, customerBudget: localBudget });
+    const updates: any = {};
+    if (canEditBatchSize && localBatchSize !== config.round1BatchSize) updates.round1BatchSize = localBatchSize;
+    if (canEditBudget && localBudget !== config.customerBudget) updates.customerBudget = localBudget;
+    if (Object.keys(updates).length === 0) return;
+    updateConfig(updates);
   };
 
   // --- Lobby Logic ---
@@ -139,22 +129,43 @@ const Instructor: React.FC = () => {
 
 
   // --- Data Processing ---
-  
-  const leaderboard = instructorStats?.leaderboard || [];
+
+  // Leaderboard table: join total_jokes from output_vs_rejection, allow sorting by any column.
+  const totalJokesByTeamId = new Map<number, number>(
+    (instructorStats?.output_vs_rejection || []).map(r => [Number(r.team_id), Number(r.total_jokes ?? 0)]),
+  );
+
+  const leaderboardBase = (instructorStats?.leaderboard || []).map(row => {
+    const teamId = Number(row.team.id);
+    const teamName = teamNames[String(teamId)] || row.team.name;
+    return {
+      team_id: teamId,
+      team_name: teamName,
+      rated_batches: Number(row.batches_rated ?? 0),
+      accepted_jokes: Number(row.accepted_jokes ?? 0),
+      total_jokes: Number(totalJokesByTeamId.get(teamId) ?? 0),
+      avg_score_overall: Number(row.avg_score_overall ?? 0),
+      total_sales: Number(row.total_sales ?? 0),
+    };
+  });
+
+  const leaderboardSorted = [...leaderboardBase].sort((a, b) => {
+    const dir = leaderboardSortDir === 'asc' ? 1 : -1;
+    if (leaderboardSortKey === 'team') {
+      return dir * a.team_name.localeCompare(b.team_name);
+    }
+    const av = a[leaderboardSortKey] ?? 0;
+    const bv = b[leaderboardSortKey] ?? 0;
+    return dir * (av - bv);
+  });
+
   const activeTeamIds = Array.from(new Set([
-    ...leaderboard.map(t => String(t.team.id)),
+    ...leaderboardBase.map(t => String(t.team_id)),
     ...Object.keys(teamNames).filter(id => roster.some(u => u.team === id)),
   ])).sort((a, b) => Number(a) - Number(b));
 
   // Demo constraint: cap the displayed teams to 20.
   const visibleTeamIds = activeTeamIds.slice(0, 20);
-
-  const barChartData = (instructorStats?.revenue_vs_acceptance || []).map(item => ({
-    name: teamNames[String(item.team_id)] || item.team_name,
-    Revenue: item.total_sales,
-    Accepted: item.accepted_jokes,
-    AcceptanceRate: (item.acceptance_rate ?? 0) * 100,
-  }));
 
   const cumulativeSalesData = (() => {
     const events = instructorStats?.cumulative_sales || [];
@@ -173,7 +184,7 @@ const Instructor: React.FC = () => {
     name: item.team_name,
   }));
 
-  const learningCurveData = (() => {
+  const sequenceVsQualityData = (() => {
     const points = instructorStats?.learning_curve || [];
     const grouped: Record<number, any> = {};
     points.forEach(p => {
@@ -182,20 +193,6 @@ const Instructor: React.FC = () => {
     });
     return Object.values(grouped).sort((a: any, b: any) => a.seq - b.seq);
   })();
-
-  const misalignmentData = (instructorStats?.output_vs_rejection || []).map((item, idx) => ({
-    team: String(item.team_id),
-    name: teamNames[String(item.team_id)] || item.team_name,
-    output: item.total_jokes,
-    rejectionRate: (item.rejection_rate ?? 0) * 100,
-    fill: PALETTE[idx % PALETTE.length],
-  }));
-
-  const leaderboardChartData = (instructorStats?.leaderboard || []).map(item => ({
-    name: teamNames[String(item.team.id)] || item.team.name,
-    Points: item.points,
-    Sales: item.total_sales,
-  }));
 
   const rosterByTeam: Record<string, typeof roster> = {};
   roster.forEach(u => {
@@ -239,27 +236,16 @@ const Instructor: React.FC = () => {
   // Render Charts Helper
   const renderChart = (type: string) => {
     switch(type) {
-        case 'revenue':
-            return (
-                 <ResponsiveContainer width="100%" height="100%">
-                   <BarChart data={barChartData} margin={{ left: 20 }}>
-                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                     <XAxis dataKey="name" />
-                    <YAxis yAxisId="left" orientation="left" stroke="#10B981" />
-                    <YAxis yAxisId="right" orientation="right" stroke="#6366F1" />
-                     <Tooltip />
-                     <Bar yAxisId="left" dataKey="Revenue" fill="#10B981" name="Revenue ($)" radius={[4, 4, 0, 0]} />
-                    <Bar yAxisId="right" dataKey="Accepted" fill="#6366F1" name="Accepted Jokes" radius={[4, 4, 0, 0]} />
-                   </BarChart>
-                 </ResponsiveContainer>
-            );
         case 'sales':
             return (
                <ResponsiveContainer width="100%" height="100%">
-                 <LineChart data={cumulativeSalesData} margin={{ bottom: 20, left: 20 }}>
+                 <LineChart data={cumulativeSalesData} margin={{ bottom: 20, left: 48, right: 16 }}>
                    <CartesianGrid strokeDasharray="3 3" />
                    <XAxis dataKey="index" label={{ value: 'Event Sequence', position: 'insideBottom', offset: -10 }} />
-                   <YAxis label={{ value: 'Cumulative Sales ($)', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }} />
+                   <YAxis
+                     width={44}
+                     label={{ value: 'Cum. Sales', angle: -90, position: 'insideLeft', dx: -10 }}
+                   />
                    <Tooltip />
                    {visibleTeamIds.map((teamId, index) => (
                       <Line 
@@ -275,25 +261,38 @@ const Instructor: React.FC = () => {
                  </LineChart>
                </ResponsiveContainer>
             );
-        case 'quality':
+        case 'size_quality':
             return (
                <ResponsiveContainer width="100%" height="100%">
-                 <ScatterChart margin={{ bottom: 20, left: 20 }}>
+                 <ScatterChart margin={{ bottom: 20, left: 48, right: 16 }}>
                    <CartesianGrid strokeDasharray="3 3" />
                    <XAxis type="number" dataKey="size" name="Batch Size" unit=" jokes" />
-                   <YAxis type="number" dataKey="quality" name="Avg Quality" domain={[0, 5]} label={{ value: 'Avg Quality', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }} />
+                   <YAxis
+                     width={44}
+                     type="number"
+                     dataKey="quality"
+                     name="Avg Quality"
+                     domain={[0, 5]}
+                     label={{ value: 'Avg Quality', angle: -90, position: 'insideLeft', dx: -10 }}
+                   />
                    <Tooltip cursor={{ strokeDasharray: '3 3' }} />
                   <Scatter name="Batches" data={sizeVsQualityData} fill="#8884d8" />
                  </ScatterChart>
                </ResponsiveContainer>
             );
-        case 'learning':
+        case 'sequence_quality':
             return (
                <ResponsiveContainer width="100%" height="100%">
-                 <LineChart data={learningCurveData} margin={{ bottom: 20, left: 20 }}>
+                 <LineChart data={sequenceVsQualityData} margin={{ top: 12, bottom: 20, left: 48, right: 16 }}>
                    <CartesianGrid strokeDasharray="3 3" />
-                   <XAxis dataKey="seq" label={{ value: 'Batch Order (1st, 2nd...)', position: 'insideBottom', offset: -10 }} />
-                   <YAxis domain={[0, 5]} label={{ value: 'Avg Quality', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }} />
+                   <XAxis dataKey="seq" label={{ value: 'Batch Sequence', position: 'insideBottom', offset: -10 }} />
+                   <YAxis
+                     width={44}
+                     // Add a bit of headroom so points at 5.0 don't sit on the top border.
+                     domain={[0, 5.2]}
+                     padding={{ top: 12, bottom: 6 }}
+                     label={{ value: 'Avg Quality', angle: -90, position: 'insideLeft', dx: -10 }}
+                   />
                    <Tooltip />
                    {visibleTeamIds.map((teamId, index) => (
                       <Line 
@@ -308,32 +307,6 @@ const Instructor: React.FC = () => {
                    ))}
                  </LineChart>
                </ResponsiveContainer>
-            );
-        case 'misalignment':
-            return (
-               <ResponsiveContainer width="100%" height="100%">
-                 <ScatterChart margin={{ bottom: 20, left: 20 }}>
-                   <CartesianGrid strokeDasharray="3 3" />
-                   <XAxis type="number" dataKey="output" name="Jokes Submitted" label={{ value: 'Total Jokes Submitted', position: 'insideBottom', offset: -10 }} />
-                   <YAxis type="number" dataKey="rejectionRate" name="Rejection Rate" unit="%" label={{ value: 'Rejection Rate (%)', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' } }} />
-                   <Tooltip content={<CustomScatterTooltip />} cursor={{ strokeDasharray: '3 3' }} />
-                   <Scatter name="Teams" data={misalignmentData} fill="#82ca9d" />
-                 </ScatterChart>
-               </ResponsiveContainer>
-            );
-        case 'leaderboard':
-            return (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={leaderboardChartData} margin={{ left: 20 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="Points" fill="#0ea5e9" radius={[4,4,0,0]} />
-                  <Bar dataKey="Sales" fill="#10b981" radius={[4,4,0,0]} />
-                </BarChart>
-              </ResponsiveContainer>
             );
         default: return null;
     }
@@ -480,11 +453,7 @@ const Instructor: React.FC = () => {
                 <Button onClick={() => setShowResetConfirm(true)} variant="danger" className="p-2" title="Reset Game (Clear All)">
                    <RefreshCw size={16} />
                  </Button>
-                 {config.status === 'PLAYING' && (
-                     <button onClick={resetToLobby} className="text-xs text-blue-600 underline ml-2">
-                         Back to Lobby
-                     </button>
-                 )}
+                 
               </div>
             </div>
 
@@ -514,7 +483,8 @@ const Instructor: React.FC = () => {
                    type="number" 
                    value={localBatchSize} 
                    onChange={e => setLocalBatchSize(Number(e.target.value))}
-                   className="w-16 p-1 border border-gray-300 rounded text-center bg-white text-black"
+                   disabled={!canEditBatchSize}
+                   className={`w-16 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditBatchSize ? 'opacity-50 cursor-not-allowed' : ''}`}
                  />
                </div>
                <div className="flex items-center gap-2">
@@ -523,7 +493,8 @@ const Instructor: React.FC = () => {
                    type="number" 
                    value={localBudget} 
                    onChange={e => setLocalBudget(Number(e.target.value))}
-                   className="w-16 p-1 border border-gray-300 rounded text-center bg-white text-black"
+                   disabled={!canEditBudget}
+                   className={`w-16 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditBudget ? 'opacity-50 cursor-not-allowed' : ''}`}
                  />
                  <Button
                    type="button"
@@ -557,47 +528,11 @@ const Instructor: React.FC = () => {
           </div>
         )}
 
-        {!instructorStats && (
-          <div className="text-sm text-gray-500">
-            Charts will appear once instructor stats are available. If you’re expecting data but see nothing, make sure
-            you’re running in backend mode (set <code className="px-1 py-0.5 bg-gray-100 rounded">VITE_API_BASE_URL</code>)
-            and that the round has started / produced events.
-          </div>
-        )}
 
+        {/* Dashboard grid */}
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-          
-          {/* Chart 1: Revenue vs Acceptance */}
-          {!isChartHidden('revenue') && (
-            <Card 
-              title="Revenue vs Acceptance"
-              action={
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setExpandedChart('revenue')}
-                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
-                    title="Expand chart"
-                  >
-                    <Maximize2 size={18} />
-                  </button>
-                  <button
-                    onClick={() => hideChart('revenue')}
-                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600"
-                    title="Hide chart (this session only)"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-              }
-            >
-              <div className="h-72 w-full">
-                {renderChart('revenue')}
-              </div>
-            </Card>
-          )}
-
-          {/* Widget 2: Team Management */}
-          <Card title="Team Management (Drag to Move, Click to Switch Role)">
+          {/* Team Management (full width) */}
+          <Card className="xl:col-span-2" title="Team Management (Drag to Move, Click to Switch Role)">
             <div className="overflow-x-auto max-h-80 overflow-y-auto">
               <table className="min-w-full text-sm">
                 <thead className="sticky top-0 bg-white shadow-sm z-10">
@@ -744,40 +679,139 @@ const Instructor: React.FC = () => {
               </table>
             </div>
           </Card>
+
+          {/* Leaderboard (full width) */}
+          <Card className="xl:col-span-2" title="Leaderboard">
+            <div className="overflow-x-auto max-h-80 overflow-y-auto">
+              <table className="min-w-full text-sm">
+                <thead className="sticky top-0 bg-white shadow-sm z-10">
+                  <tr className="bg-gray-50 border-b">
+                    <th className="px-3 py-2 text-left font-medium text-gray-500">Rank</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-500">
+                      <button
+                        type="button"
+                        className="inline-flex items-center hover:text-gray-800"
+                        onClick={() => {
+                          setLeaderboardSortKey('team');
+                          setLeaderboardSortDir(prev => (leaderboardSortKey === 'team' ? (prev === 'asc' ? 'desc' : 'asc') : 'asc'));
+                        }}
+                        title="Sort by Team"
+                      >
+                        <span>Team</span>
+                        <span className="ml-1 w-3 text-center">
+                          {leaderboardSortKey === 'team' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                        </span>
+                      </button>
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-500">
+                      <button
+                        type="button"
+                        className="inline-flex items-center hover:text-gray-800"
+                        onClick={() => {
+                          setLeaderboardSortKey('rated_batches');
+                          setLeaderboardSortDir(prev => (leaderboardSortKey === 'rated_batches' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+                        }}
+                        title="Sort by Rated Batches"
+                      >
+                        <span>Rated Batches</span>
+                        <span className="ml-1 w-3 text-center">
+                          {leaderboardSortKey === 'rated_batches' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                        </span>
+                      </button>
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-500">
+                      <button
+                        type="button"
+                        className="inline-flex items-center hover:text-gray-800"
+                        onClick={() => {
+                          setLeaderboardSortKey('accepted_jokes');
+                          setLeaderboardSortDir(prev => (leaderboardSortKey === 'accepted_jokes' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+                        }}
+                        title="Sort by Accepted Jokes"
+                      >
+                        <span>Accepted Jokes</span>
+                        <span className="ml-1 w-3 text-center">
+                          {leaderboardSortKey === 'accepted_jokes' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                        </span>
+                      </button>
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-500">
+                      <button
+                        type="button"
+                        className="inline-flex items-center hover:text-gray-800"
+                        onClick={() => {
+                          setLeaderboardSortKey('total_jokes');
+                          setLeaderboardSortDir(prev => (leaderboardSortKey === 'total_jokes' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+                        }}
+                        title="Sort by Total Jokes"
+                      >
+                        <span>Total Jokes</span>
+                        <span className="ml-1 w-3 text-center">
+                          {leaderboardSortKey === 'total_jokes' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                        </span>
+                      </button>
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-500">
+                      <button
+                        type="button"
+                        className="inline-flex items-center hover:text-gray-800"
+                        onClick={() => {
+                          setLeaderboardSortKey('avg_score_overall');
+                          setLeaderboardSortDir(prev => (leaderboardSortKey === 'avg_score_overall' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+                        }}
+                        title="Sort by Average Score"
+                      >
+                        <span>Avg Score</span>
+                        <span className="ml-1 w-3 text-center">
+                          {leaderboardSortKey === 'avg_score_overall' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                        </span>
+                      </button>
+                    </th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-500">
+                      <button
+                        type="button"
+                        className="inline-flex items-center hover:text-gray-800"
+                        onClick={() => {
+                          setLeaderboardSortKey('total_sales');
+                          setLeaderboardSortDir(prev => (leaderboardSortKey === 'total_sales' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+                        }}
+                        title="Sort by Total Sales"
+                      >
+                        <span>Total Sales</span>
+                        <span className="ml-1 w-3 text-center">
+                          {leaderboardSortKey === 'total_sales' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                        </span>
+                      </button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {leaderboardSorted.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="px-3 py-6 text-center text-gray-400 italic">
+                        No leaderboard data yet.
+                      </td>
+                    </tr>
+                  )}
+                  {leaderboardSorted.map((row, idx) => (
+                    <tr key={String(row.team_id)} className="hover:bg-gray-50">
+                      <td className="px-3 py-2 font-mono text-gray-700">{idx + 1}</td>
+                      <td className="px-3 py-2 font-semibold text-gray-900">{row.team_name}</td>
+                      <td className="px-3 py-2 text-right text-gray-800">{row.rated_batches}</td>
+                      <td className="px-3 py-2 text-right text-gray-800">{row.accepted_jokes}</td>
+                      <td className="px-3 py-2 text-right text-gray-800">{row.total_jokes}</td>
+                      <td className="px-3 py-2 text-right text-gray-800">{row.avg_score_overall.toFixed(1)}</td>
+                      <td className="px-3 py-2 text-right font-bold text-emerald-700">{row.total_sales}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
           
-          {/* Leaderboard */}
-          {!isChartHidden('leaderboard') && (
-            <Card 
-              title="Leaderboard"
-              action={
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setExpandedChart('leaderboard')}
-                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
-                    title="Expand chart"
-                  >
-                    <Maximize2 size={18} />
-                  </button>
-                  <button
-                    onClick={() => hideChart('leaderboard')}
-                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600"
-                    title="Hide chart (this session only)"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-              }
-            >
-              <div className="h-72 w-full">
-                {renderChart('leaderboard')}
-              </div>
-            </Card>
-          )}
-
-
-          {/* Chart 2/3: Cumulative Sales */}
+          {/* 2) Cumulative Sales Over Time */}
           {!isChartHidden('sales') && (
-            <Card 
+            <Card
               title="Cumulative Sales Over Time"
               action={
                 <div className="flex items-center gap-1">
@@ -804,21 +838,50 @@ const Instructor: React.FC = () => {
             </Card>
           )}
 
-          {/* Chart 3: Batch Size vs Quality */}
-          {!isChartHidden('quality') && (
-            <Card 
+          {/* 3) Batch Sequence vs Quality */}
+          {!isChartHidden('sequence_quality') && (
+            <Card
+              title="Batch Sequence vs Quality"
+              action={
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setExpandedChart('sequence_quality')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
+                    title="Expand chart"
+                  >
+                    <Maximize2 size={18} />
+                  </button>
+                  <button
+                    onClick={() => hideChart('sequence_quality')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600"
+                    title="Hide chart (this session only)"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              }
+            >
+              <div className="h-72 w-full">
+                {renderChart('sequence_quality')}
+              </div>
+            </Card>
+          )}
+
+          {/* 4) Batch Size vs Average Quality */}
+          {!isChartHidden('size_quality') && (
+            <Card
               title="Batch Size vs Average Quality"
               action={
                 <div className="flex items-center gap-1">
                   <button
-                    onClick={() => setExpandedChart('quality')}
+                    onClick={() => setExpandedChart('size_quality')}
                     className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
                     title="Expand chart"
                   >
                     <Maximize2 size={18} />
                   </button>
                   <button
-                    onClick={() => hideChart('quality')}
+                    onClick={() => hideChart('size_quality')}
                     className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600"
                     title="Hide chart (this session only)"
                   >
@@ -828,65 +891,7 @@ const Instructor: React.FC = () => {
               }
             >
               <div className="h-72 w-full">
-                {renderChart('quality')}
-              </div>
-            </Card>
-          )}
-
-          {/* Chart 4: Learning Curve */}
-          {!isChartHidden('learning') && (
-            <Card 
-              title="Learning Curve: Quality by Batch Order"
-              action={
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setExpandedChart('learning')}
-                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
-                    title="Expand chart"
-                  >
-                    <Maximize2 size={18} />
-                  </button>
-                  <button
-                    onClick={() => hideChart('learning')}
-                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600"
-                    title="Hide chart (this session only)"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-              }
-            >
-              <div className="h-72 w-full">
-                {renderChart('learning')}
-              </div>
-            </Card>
-          )}
-
-           {/* Chart 5: Process Misalignment */}
-          {!isChartHidden('misalignment') && (
-            <Card 
-              title="JM Output vs QC Rejection Rate"
-              action={
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setExpandedChart('misalignment')}
-                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
-                    title="Expand chart"
-                  >
-                    <Maximize2 size={18} />
-                  </button>
-                  <button
-                    onClick={() => hideChart('misalignment')}
-                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600"
-                    title="Hide chart (this session only)"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-              }
-            >
-              <div className="h-72 w-full">
-                {renderChart('misalignment')}
+                {renderChart('size_quality')}
               </div>
             </Card>
           )}

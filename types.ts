@@ -154,17 +154,24 @@ export interface ApiInstructorLoginResponse {
   round_id: RoundId;
 }
 
+export interface ApiRound {
+  id: RoundId;
+  round_number: number;
+  status: string; // backend may return "Active"/"Ended"/"Configured"; we normalize client-side
+  batch_size: number;
+  customer_budget: number;
+  started_at?: string | null;
+  ended_at?: string | null;
+  created_at?: string;
+  is_popped_active?: boolean;
+}
+
 export interface ApiActiveRoundResponse {
-  rounds: Array<{
-    id: RoundId;
-    round_number: number;
-    status: string; // backend may return "Active"/"Ended"/"Configured"; we normalize in services
-    batch_size: number;
-    customer_budget: number;
-    started_at?: string | null;
-    ended_at?: string | null;
-    is_popped_active?: boolean;
-  }>;
+  rounds: ApiRound[];
+}
+
+export interface ApiInstructorRoundConfigResponse {
+  data: { round: ApiRound };
 }
 
 export interface ApiTeamSummaryResponse {

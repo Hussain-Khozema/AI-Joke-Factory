@@ -5,6 +5,7 @@ import type {
   ApiInstructorDeleteUserResponse,
   ApiInstructorLoginRequest,
   ApiInstructorLoginResponse,
+  ApiInstructorRoundConfigResponse,
   RoundId,
   TeamId,
   UserId,
@@ -37,6 +38,13 @@ export const instructorService = {
 
   deleteUser(round_id: RoundId, user_id: UserId): Promise<ApiInstructorDeleteUserResponse> {
     return apiRequest<ApiInstructorDeleteUserResponse>(`/v1/instructor/rounds/${round_id}/users/${user_id}`, { method: 'DELETE' });
+  },
+
+  updateRoundConfig(
+    round_id: RoundId,
+    body: { customer_budget: number; batch_size: number; is_popped_active?: boolean },
+  ): Promise<ApiInstructorRoundConfigResponse> {
+    return apiRequest<ApiInstructorRoundConfigResponse>(`/v1/instructor/rounds/${round_id}/config`, { method: 'POST', body });
   },
 
   start(round_id: RoundId, body: { customer_budget: number; batch_size: number }): Promise<void> {

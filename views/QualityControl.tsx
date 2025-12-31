@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useGame } from '../context';
 import { Button, Card, StatBox, RoleLayout, Modal } from '../components';
 import { Star, CheckCircle, Clock, Tag, AlertTriangle } from 'lucide-react';
@@ -16,7 +16,7 @@ const TAG_OPTIONS = [
 ];
 
 const QualityControl: React.FC = () => {
-  const { user, batches, rateBatch, config, qcQueue, teamSummary } = useGame();
+  const { user, roster, batches, rateBatch, config, qcQueue, teamSummary } = useGame();
   
   // API queue provides the next SUBMITTED batch; local state keeps rated history for this session.
   const pendingBatches: Batch[] = qcQueue ? [{
@@ -44,6 +44,7 @@ const QualityControl: React.FC = () => {
   const [currentRatings, setCurrentRatings] = useState<{ [jokeId: string]: number }>({});
   const [currentTags, setCurrentTags] = useState<{ [jokeId: string]: string[] }>({});
   const [batchFeedback, setBatchFeedback] = useState("");
+  const [dismissedTeamPopup, setDismissedTeamPopup] = useState(false);
   const activeBatch = pendingBatches.find(b => b.id === activeBatchId) || pendingBatches[0];
 
   // Stats (rated history + live summary)
@@ -89,8 +90,36 @@ const QualityControl: React.FC = () => {
     return allRated && allTagged && feedbackValid;
   };
 
+  useEffect(() => {
+    if (!config.showTeamPopup) setDismissedTeamPopup(false);
+  }, [config.showTeamPopup]);
+
   return (
     <RoleLayout>
+      {/* Round 2: Team popup (backend-controlled via is_popped_active) */}
+      <Modal
+        isOpen={config.round === 2 && config.showTeamPopup && !dismissedTeamPopup}
+        onClose={() => setDismissedTeamPopup(true)}
+        title="Your Team"
+      >
+        <div className="space-y-2">
+          <p className="text-sm text-gray-600">
+            Your instructor has opened team popups. Here are your team members:
+          </p>
+          <div className="divide-y divide-gray-100 border border-gray-200 rounded">
+            {(roster.length ? roster : (user ? [user] : [])).map(m => (
+              <div key={m.id} className="flex items-center justify-between px-3 py-2">
+                <span className="font-medium text-gray-900">{m.name}</span>
+                <span className="text-xs font-bold text-gray-500">{m.role.replace('_', ' ')}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400">
+            You can close this popup locally; it will reappear next time the instructor opens it again.
+          </p>
+        </div>
+      </Modal>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
         {/* Left Column: Queue & Active Rating */}
@@ -202,7 +231,7 @@ const QualityControl: React.FC = () => {
             <StatBox label="Current Rank" value={myRank} color="bg-green-100 text-green-900 border-2 border-green-400 shadow-md" />
             <StatBox label="Queue" value={qcQueue?.queue_size ?? pendingBatches.length} color="bg-purple-50 text-purple-700" />
             <StatBox label="Avg Quality" value={avgScore} color="bg-indigo-50 text-indigo-700" />
-            <StatBox label="Total Points" value={totalPoints} color="bg-amber-50 text-amber-700" />
+            <StatBox label="Total Sales" value={totalPoints} color="bg-amber-50 text-amber-700" />
           </div>
 
           <Card title="Incoming Queue">

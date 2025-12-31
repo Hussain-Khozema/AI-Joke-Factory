@@ -28,6 +28,8 @@ import { setMockRoundNumber } from './services/mockApi';
 
 const LS_USER_ID = 'joke_factory_user_id';
 const LS_DISPLAY_NAME = 'joke_factory_display_name';
+const LS_SUBMITTED_BATCH_JOKES = 'joke_factory_submitted_batch_jokes_v1';
+const LS_QC_RATED_HISTORY = 'joke_factory_qc_rated_history_v1';
 
 const DEFAULT_ROUND2_BATCH_LIMIT = 6;
 
@@ -357,6 +359,32 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   const [config, setConfig] = useState<GameConfig>(initialConfig());
+
+  // Restore local caches across refresh (best-effort).
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_SUBMITTED_BATCH_JOKES);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          submittedBatchJokesRef.current = parsed as Record<string, string[]>;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      const raw = localStorage.getItem(LS_QC_RATED_HISTORY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          qcRatedHistoryRef.current = parsed as Record<string, Batch>;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
   // Initial load from localStorage (session only)
   useEffect(() => {
     const storedUserId = localStorage.getItem(LS_USER_ID);
@@ -549,9 +577,21 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ? (activePayload?.data?.rounds ?? active.rounds)
           : [];
         const pickStatus = (r: any) => normalizeRoundStatus(r?.status);
-        const activeRound = rounds.find(r => pickStatus(r) === 'ACTIVE') ?? rounds[0] ?? null;
+        const r1 = rounds.find(r => Number(r?.round_number) === 1) ?? null;
+        const r2 = rounds.find(r => Number(r?.round_number) === 2) ?? null;
+        const round1Status = pickStatus(r1);
+
+        const activeRound = rounds.find(r => pickStatus(r) === 'ACTIVE') ?? null;
+        // If nothing is ACTIVE, prefer Round 2 once Round 1 has ended.
+        const selectedRound =
+          activeRound ??
+          (round1Status === 'ENDED' ? r2 : null) ??
+          r1 ??
+          rounds[0] ??
+          null;
+
         const effectiveRoundId =
-          (activeRound?.id as RoundId | undefined) ??
+          (selectedRound?.id as RoundId | undefined) ??
           effectiveRoundIdFromMe ??
           roundId;
         if (effectiveRoundId && effectiveRoundId !== roundId) {
@@ -559,25 +599,35 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else if (effectiveRoundIdFromMe && roundId == null) {
           setRoundId(effectiveRoundIdFromMe);
         }
-        const apiRoundNumber = activeRound?.round_number as number | undefined;
-        const normalizedStatus = pickStatus(activeRound) ?? 'CONFIGURED';
+        const apiRoundNumber = selectedRound?.round_number as number | undefined;
+        const normalizedStatus = pickStatus(selectedRound) ?? 'CONFIGURED';
         const isActive = normalizedStatus === 'ACTIVE';
+
+        // Backend-controlled Round 2 team popup flag.
+        const popupActiveRaw = Boolean(
+          (apiRoundNumber === 2 ? selectedRound?.is_popped_active : r2?.is_popped_active) ?? false,
+        );
+        const popupActive = (apiRoundNumber ?? 1) === 2 && popupActiveRaw;
 
         setConfig(prev => {
           const baseRound = apiRoundNumber ?? prev.round ?? 1;
           // Auto-advance UI: after Round 1 is ENDED, default to Round 2 even before it becomes ACTIVE.
-          const nextRound = normalizedStatus === 'ENDED' && baseRound === 1 ? 2 : baseRound;
-          const elapsed = isActive && activeRound?.started_at ? Math.max(0, Math.floor((nowMs() - Date.parse(activeRound.started_at)) / 1000)) : prev.elapsedTime;
+          const nextRound = round1Status === 'ENDED' ? 2 : baseRound;
+          const elapsed =
+            isActive && selectedRound?.started_at
+              ? Math.max(0, Math.floor((nowMs() - Date.parse(selectedRound.started_at)) / 1000))
+              : prev.elapsedTime;
           return {
             ...prev,
-            status: isActive ? 'PLAYING' : (normalizedStatus === 'ENDED' ? 'PLAYING' : 'LOBBY'),
+            status: isActive ? 'PLAYING' : (round1Status === 'ENDED' ? 'PLAYING' : 'LOBBY'),
             round: nextRound,
             isActive,
-            startTime: isActive && activeRound?.started_at ? Date.parse(activeRound.started_at) : null,
+            showTeamPopup: popupActive,
+            startTime: isActive && selectedRound?.started_at ? Date.parse(selectedRound.started_at) : null,
             elapsedTime: elapsed,
-            customerBudget: activeRound?.customer_budget ?? prev.customerBudget,
-            round1BatchSize: activeRound?.batch_size ?? prev.round1BatchSize,
-            round2BatchLimit: prev.round2BatchLimit ?? DEFAULT_ROUND2_BATCH_LIMIT,
+            customerBudget: selectedRound?.customer_budget ?? prev.customerBudget,
+            round1BatchSize: r1?.batch_size ?? prev.round1BatchSize,
+            round2BatchLimit: r2?.batch_size ?? prev.round2BatchLimit ?? DEFAULT_ROUND2_BATCH_LIMIT,
           };
         });
 
@@ -677,13 +727,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               const batchesArr: any[] = Array.isArray(listData?.batches) ? listData.batches : [];
 
               setTeamSummary(summaryData as any);
-              const roundNumber = config.round ?? 1;
+              const roundNumber = apiRoundNumber ?? config.round ?? 1;
               const mapped = batchesArr.map(b =>
                 mapBatchFromTeamList(
                   roundNumber,
                   me.assignment.team_id!,
                   b,
-                  submittedBatchJokesRef.current[String(b.batch_id)],
+                  submittedBatchJokesRef.current[`${effectiveRound}:${String(b.batch_id)}`],
                 ),
               );
               // Merge QC-rated history (if any) so JM can still see feedback in same session.
@@ -698,8 +748,30 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // ignore; action will surface
           }
 
-          // teammates modal removed; keep roster minimal (self only)
-          setRoster([nextUser]);
+          // Round 2: show team popup members when backend says popup is active.
+          if (popupActive) {
+            try {
+              const raw = await sessionService.myTeam(effectiveRound);
+              const anyRaw: any = raw;
+              const data: any = anyRaw?.data ?? anyRaw;
+              const members: any[] = Array.isArray(data?.members) ? data.members : [];
+              if (!cancelled) {
+                const users = members.map(m =>
+                  makeUser(
+                    { user_id: Number(m.user_id) as UserId, display_name: String(m.display_name ?? '') },
+                    toRole(m.role),
+                    (m.team_id ?? me.assignment.team_id) as TeamId,
+                  ),
+                );
+                setRoster(users.length ? users : [nextUser]);
+              }
+            } catch {
+              if (!cancelled) setRoster([nextUser]);
+            }
+          } else {
+            // Default: keep roster minimal (self only)
+            setRoster([nextUser]);
+          }
         } else if (role === ('QUALITY_CONTROL' as Role)) {
           const effectiveRound = effectiveRoundId ?? me.round_id ?? null;
           if (!effectiveRound) {
@@ -737,7 +809,28 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           }
 
-          setRoster([nextUser]);
+          if (popupActive) {
+            try {
+              const raw = await sessionService.myTeam(effectiveRound);
+              const anyRaw: any = raw;
+              const data: any = anyRaw?.data ?? anyRaw;
+              const members: any[] = Array.isArray(data?.members) ? data.members : [];
+              if (!cancelled) {
+                const users = members.map(m =>
+                  makeUser(
+                    { user_id: Number(m.user_id) as UserId, display_name: String(m.display_name ?? '') },
+                    toRole(m.role),
+                    (m.team_id ?? summaryTeamId ?? me.assignment.team_id ?? null) as TeamId,
+                  ),
+                );
+                setRoster(users.length ? users : [nextUser]);
+              }
+            } catch {
+              if (!cancelled) setRoster([nextUser]);
+            }
+          } else {
+            setRoster([nextUser]);
+          }
 
           // Keep local rated history visible in QC UI (no API endpoint for history provided).
           if (!cancelled) {
@@ -848,6 +941,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setInstructorLobby(null);
     setInstructorStats(null);
     setQcQueue(null);
+
+    // Clear local caches (avoid leaking state across users).
+    submittedBatchJokesRef.current = {};
+    qcRatedHistoryRef.current = {};
+    localStorage.removeItem(LS_SUBMITTED_BATCH_JOKES);
+    localStorage.removeItem(LS_QC_RATED_HISTORY);
   };
 
   const updateConfig = async (updates: Partial<GameConfig>) => {
@@ -1012,7 +1111,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const created = await jmService.createBatch(roundId, { team_id: user.team_id, jokes: jokeContents });
       const createdBatch: any = (created as any)?.data?.batch ?? (created as any)?.batch ?? created;
       // Cache joke text for UI history.
-      submittedBatchJokesRef.current[String(createdBatch.batch_id)] = jokeContents;
+      submittedBatchJokesRef.current[`${roundId}:${String(createdBatch.batch_id)}`] = jokeContents;
+      try {
+        localStorage.setItem(LS_SUBMITTED_BATCH_JOKES, JSON.stringify(submittedBatchJokesRef.current));
+      } catch {
+        // ignore
+      }
       // Trigger refresh: rely on poll; also do a quick local update for responsiveness.
       const batch: Batch = {
         batch_id: createdBatch.batch_id,
@@ -1117,8 +1221,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         feedback,
         tagSummary,
       };
-      qcRatedHistoryRef.current[String(batch.batch_id)] = batch;
+      qcRatedHistoryRef.current[`${roundId}:${String(batch.batch_id)}`] = batch;
       setBatches(Object.values(qcRatedHistoryRef.current));
+      try {
+        localStorage.setItem(LS_QC_RATED_HISTORY, JSON.stringify(qcRatedHistoryRef.current));
+      } catch {
+        // ignore
+      }
       setQcQueue(null);
     } catch (e) {
       if (e instanceof ApiError) {
@@ -1224,17 +1333,37 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const ensureInstructorRoundId = async (): Promise<RoundId | null> => {
+    if (roundId) return roundId;
+    if (!user || user.role !== ('INSTRUCTOR' as Role)) return null;
+    try {
+      const me = await sessionService.me();
+      if (me?.round_id) {
+        setRoundId(me.round_id);
+        return me.round_id;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  };
+
   const setGameActive = async (isActive: boolean) => {
     // Backend schema supports start/end (no pause). We map `Start` to /start.
     // `Pause` remains local-only until backend supports a pause endpoint.
-    if (!roundId || !user || user.role !== ('INSTRUCTOR' as Role)) {
+    if (!user || user.role !== ('INSTRUCTOR' as Role)) {
       setConfig(prev => ({ ...prev, isActive }));
+      return;
+    }
+    const rid = await ensureInstructorRoundId();
+    if (!rid) {
+      alert('Missing round id; please refresh and try again.');
       return;
     }
     try {
       if (isActive) {
         const batch_size = config.round === 2 ? config.round2BatchLimit : config.round1BatchSize;
-        await instructorService.start(roundId, {
+        await instructorService.start(rid, {
           customer_budget: config.customerBudget,
           batch_size,
         });
@@ -1250,12 +1379,40 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       alert('Failed to start round.');
     }
   };
-  const toggleTeamPopup = async (show: boolean) => updateConfig({ showTeamPopup: show });
+  const toggleTeamPopup = async (show: boolean) => {
+    // Backend now controls Round 2 popups via /v1/rounds/active -> is_popped_active.
+    // Best-effort: update server config when instructor toggles; polling will sync all clients.
+    if (!user || user.role !== ('INSTRUCTOR' as Role)) {
+      updateConfig({ showTeamPopup: show });
+      return;
+    }
+    const rid = await ensureInstructorRoundId();
+    if (!rid) {
+      alert('Missing round id; please refresh and try again.');
+      return;
+    }
+    try {
+      const batch_size = config.round === 2 ? config.round2BatchLimit : config.round1BatchSize;
+      await instructorService.updateRoundConfig(rid, {
+        customer_budget: config.customerBudget,
+        batch_size,
+        is_popped_active: show,
+      });
+      updateConfig({ showTeamPopup: show });
+    } catch {
+      alert('Failed to update popup state.');
+    }
+  };
 
   const endRound = async () => {
-    if (!roundId || !user || user.role !== ('INSTRUCTOR' as Role)) return;
+    if (!user || user.role !== ('INSTRUCTOR' as Role)) return;
+    const rid = await ensureInstructorRoundId();
+    if (!rid) {
+      alert('Missing round id; please refresh and try again.');
+      return;
+    }
     try {
-      await instructorService.end(roundId);
+      await instructorService.end(rid);
       setConfig(prev => {
         // Auto-advance: after ending Round 1, default the UI to Round 2 and keep teams.
         if (prev.round === 1) {
@@ -1293,8 +1450,22 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       alert('Failed to reset game.');
       return;
     }
-    // Clear local session/state.
-    logout();
+    // Clear local game state but keep instructor logged in (do NOT logout).
+    // Polling will re-hydrate roundId/lobby after reset.
+    setConfig(initialConfig());
+    setRoundId(null);
+    setRoster([]);
+    setBatches([]);
+    setMarketItems([]);
+    setTeamSummary(null);
+    setInstructorLobby(null);
+    setInstructorStats(null);
+    setQcQueue(null);
+    setTeamNames(INITIAL_TEAM_NAMES);
+    submittedBatchJokesRef.current = {};
+    qcRatedHistoryRef.current = {};
+    localStorage.removeItem(LS_SUBMITTED_BATCH_JOKES);
+    localStorage.removeItem(LS_QC_RATED_HISTORY);
   };
 
   return (
