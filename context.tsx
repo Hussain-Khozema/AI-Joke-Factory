@@ -731,6 +731,22 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isActive && selectedRound?.started_at
               ? Math.max(0, Math.floor((nowMs() - Date.parse(selectedRound.started_at)) / 1000))
               : prev.elapsedTime;
+
+          // Only trust backend-provided config numbers once the round has started (or ended).
+          // Before start, some backends return placeholder values like { customer_budget: 0, batch_size: 1 }.
+          const shouldUseBackendConfig = isActive || normalizedStatus === 'ENDED';
+          const nextCustomerBudget =
+            shouldUseBackendConfig && Number(selectedRound?.customer_budget) > 0
+              ? Number(selectedRound?.customer_budget)
+              : prev.customerBudget;
+          const nextRound1BatchSize =
+            shouldUseBackendConfig && Number(r1?.batch_size) > 1
+              ? Number(r1?.batch_size)
+              : prev.round1BatchSize;
+          const nextRound2BatchLimit =
+            shouldUseBackendConfig && Number(r2?.batch_size) > 1
+              ? Number(r2?.batch_size)
+              : (prev.round2BatchLimit ?? DEFAULT_ROUND2_BATCH_LIMIT);
           return {
             ...prev,
             status: isActive ? 'PLAYING' : (round1Status === 'ENDED' ? 'PLAYING' : 'LOBBY'),
@@ -739,9 +755,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             showTeamPopup: popupActive,
             startTime: isActive && selectedRound?.started_at ? Date.parse(selectedRound.started_at) : null,
             elapsedTime: elapsed,
-            customerBudget: selectedRound?.customer_budget ?? prev.customerBudget,
-            round1BatchSize: r1?.batch_size ?? prev.round1BatchSize,
-            round2BatchLimit: r2?.batch_size ?? prev.round2BatchLimit ?? DEFAULT_ROUND2_BATCH_LIMIT,
+            customerBudget: nextCustomerBudget,
+            round1BatchSize: nextRound1BatchSize,
+            round2BatchLimit: nextRound2BatchLimit,
           };
         });
 
