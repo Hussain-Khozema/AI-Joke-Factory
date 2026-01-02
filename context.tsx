@@ -419,8 +419,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         // Instructors: only poll lobby (and stats when active); skip session/me + active.
         if (user.role === ('INSTRUCTOR' as Role)) {
-          // If we don't yet know roundId (e.g., after page reload or after /admin/reset),
-          // re-hydrate it best-effort. Prefer /session/me, but fall back to /rounds/active.
+          // If we don't yet know roundId (e.g., after page reload),
+          // re-hydrate it best-effort via /session/me. We intentionally do NOT call /v1/rounds/active here.
           let effectiveRoundId = roundId;
           if (!effectiveRoundId) {
             try {
@@ -430,33 +430,12 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 setRoundId(me.round_id);
               }
             } catch (e) {
-              // Some backends invalidate /session/me for instructors after reset; try /rounds/active next.
-              // If /session/me fails due to session loss, the lobby call below will also fail and trigger logout.
+              // If /session/me fails due to session loss, don't spin forever.
               if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
                 // Treat as unauthenticated; don't spin forever.
                 logout();
                 return;
               }
-            }
-          }
-          if (!effectiveRoundId) {
-            try {
-              const active = await sessionService.activeRound();
-              const payload: any = active as any;
-              const rounds = Array.isArray(payload?.data?.rounds ?? payload?.rounds ?? (active as any)?.rounds)
-                ? (payload?.data?.rounds ?? payload?.rounds ?? (active as any)?.rounds)
-                : [];
-              const pickStatus = (r: any) => normalizeRoundStatus(r?.status);
-              const activeRound = rounds.find((r: any) => pickStatus(r) === 'ACTIVE') ?? null;
-              const r1 = rounds.find((r: any) => Number(r?.round_number) === 1) ?? null;
-              const selected = activeRound ?? r1 ?? rounds[0] ?? null;
-              const rid = (selected?.id ?? null) as RoundId | null;
-              if (rid && !cancelled) {
-                effectiveRoundId = rid;
-                setRoundId(rid);
-              }
-            } catch {
-              // ignore; if we still don't have roundId, skip this cycle.
             }
           }
           if (!effectiveRoundId) return;
@@ -1506,7 +1485,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Clear local game state but keep instructor logged in (do NOT logout).
     // Polling will re-hydrate roundId/lobby after reset.
     setConfig(initialConfig());
-    setRoundId(null);
     setRoster([]);
     setBatches([]);
     setMarketItems([]);
