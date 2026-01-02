@@ -34,7 +34,6 @@ const LS_SUBMITTED_BATCH_JOKES = 'joke_factory_submitted_batch_jokes_v1';
 const LS_QC_RATED_HISTORY = 'joke_factory_qc_rated_history_v1';
 
 const DEFAULT_ROUND2_BATCH_LIMIT = 10;
-const CUSTOMER_HYDRATE_INTERVAL_MS = 5000;
 
 // Helper to init team names (fallback, will be replaced by /v1/teams where possible)
 const INITIAL_TEAM_NAMES: Record<string, string> = {};
@@ -365,7 +364,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Polling controls
   const pollAbortRef = useRef<AbortController | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastCustomerHydrateRef = useRef<{ roundId: RoundId | null; atMs: number } | null>(null);
   
   const initialConfig = (): GameConfig => ({
     status: 'LOBBY', // Start in LOBBY to show setup screen
@@ -445,11 +443,79 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       pollAbortRef.current = new AbortController();
 
       try {
-        // Instructors: only poll lobby (and stats when active); skip session/me + active.
+        // Instructors: poll lobby + stats, and ALSO poll /rounds/active so the instructor UI
+        // always reflects whether the round is running (even after logout/login).
         if (user.role === ('INSTRUCTOR' as Role)) {
-          // If we don't yet know roundId (e.g., after page reload),
-          // re-hydrate it best-effort via /session/me. We intentionally do NOT call /v1/rounds/active here.
           let effectiveRoundId = roundId;
+          let normalizedStatus: 'ACTIVE' | 'ENDED' | 'CONFIGURED' | null = null;
+          let isActive = false;
+          let round1Status: 'ACTIVE' | 'ENDED' | 'CONFIGURED' | null = null;
+          let apiRoundNumber: number | undefined = undefined;
+          let r1: any = null;
+          let r2: any = null;
+
+          // Prefer /rounds/active to derive round status + correct round id (supports distinct ids per round).
+          try {
+            const active = await sessionService.activeRound();
+            const payload: any = active as any;
+            const rounds = Array.isArray(payload?.data?.rounds ?? payload?.rounds ?? active.rounds)
+              ? (payload?.data?.rounds ?? payload?.rounds ?? active.rounds)
+              : [];
+            const pickStatus = (r: any) => normalizeRoundStatus(r?.status);
+            r1 = rounds.find((r: any) => Number(r?.round_number) === 1) ?? null;
+            r2 = rounds.find((r: any) => Number(r?.round_number) === 2) ?? null;
+            round1Status = pickStatus(r1);
+
+            const activeRound = rounds.find((r: any) => pickStatus(r) === 'ACTIVE') ?? null;
+            const selectedRound =
+              activeRound ??
+              (round1Status === 'ENDED' ? r2 : null) ??
+              r1 ??
+              rounds[0] ??
+              null;
+
+            normalizedStatus = pickStatus(selectedRound) ?? 'CONFIGURED';
+            isActive = normalizedStatus === 'ACTIVE';
+            apiRoundNumber = selectedRound?.round_number as number | undefined;
+            const rid = (selectedRound?.id ?? null) as RoundId | null;
+            if (rid) {
+              effectiveRoundId = rid;
+              if (!cancelled && rid !== roundId) setRoundId(rid);
+            }
+
+            // Keep instructor UI in sync with backend-controlled round state.
+            if (!cancelled) {
+              const popupActiveRaw = Boolean(
+                (apiRoundNumber === 2 ? selectedRound?.is_popped_active : r2?.is_popped_active) ?? false,
+              );
+              const popupActive = (apiRoundNumber ?? 1) === 2 && popupActiveRaw;
+
+              setConfig(prev => {
+                const baseRound = apiRoundNumber ?? prev.round ?? 1;
+                const nextRound = round1Status === 'ENDED' ? 2 : baseRound;
+                const elapsed =
+                  isActive && selectedRound?.started_at
+                    ? Math.max(0, Math.floor((nowMs() - Date.parse(selectedRound.started_at)) / 1000))
+                    : prev.elapsedTime;
+                return {
+                  ...prev,
+                  status: isActive ? 'PLAYING' : (round1Status === 'ENDED' ? 'PLAYING' : 'LOBBY'),
+                  round: nextRound,
+                  isActive,
+                  showTeamPopup: popupActive,
+                  startTime: isActive && selectedRound?.started_at ? Date.parse(selectedRound.started_at) : null,
+                  elapsedTime: elapsed,
+                  customerBudget: selectedRound?.customer_budget ?? prev.customerBudget,
+                  round1BatchSize: r1?.batch_size ?? prev.round1BatchSize,
+                  round2BatchLimit: r2?.batch_size ?? prev.round2BatchLimit ?? DEFAULT_ROUND2_BATCH_LIMIT,
+                };
+              });
+            }
+          } catch {
+            // ignore; fallback to session/me for round id below
+          }
+
+          // Fallback: if we still don't know roundId (e.g., older backends), resolve via /session/me.
           if (!effectiveRoundId) {
             try {
               const me = await sessionService.me();
@@ -460,19 +526,22 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             } catch (e) {
               // If /session/me fails due to session loss, don't spin forever.
               if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
-                // Treat as unauthenticated; don't spin forever.
                 logout();
                 return;
               }
             }
           }
+
           if (!effectiveRoundId) return;
           try {
             const rawLobby = await instructorService.lobby(effectiveRoundId);
             let stats: any = null;
             try {
               // Stats availability is backend-dependent; if unavailable, keep lobby data.
-              stats = await instructorService.stats(effectiveRoundId);
+              // Avoid spamming stats when round isn't active/ended (still allow if backend doesn't expose status).
+              if (isActive || normalizedStatus === 'ENDED' || normalizedStatus == null) {
+                stats = await instructorService.stats(effectiveRoundId);
+              }
             } catch {
               // ignore stats failures when backend not ready / no data yet
             }
@@ -566,14 +635,23 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         setUser(prev => {
           if (!prev) return nextUser;
+          // IMPORTANT: avoid resetting customer fields (wallet/purchases) to defaults on every poll tick.
+          // We treat these as "statistics" and only update them when API values change.
+          const keepCustomerFields = role === ('CUSTOMER' as Role);
+          const merged: User = {
+            ...prev,
+            ...nextUser,
+            wallet: keepCustomerFields ? prev.wallet : nextUser.wallet,
+            purchasedJokes: keepCustomerFields ? prev.purchasedJokes : nextUser.purchasedJokes,
+          };
           // avoid re-render storms
           const same =
-            prev.user_id === nextUser.user_id &&
-            prev.role === nextUser.role &&
-            prev.team_id === nextUser.team_id &&
-            prev.wallet === nextUser.wallet &&
-            JSON.stringify(prev.purchasedJokes) === JSON.stringify(nextUser.purchasedJokes);
-          return same ? prev : { ...prev, ...nextUser };
+            prev.user_id === merged.user_id &&
+            prev.role === merged.role &&
+            prev.team_id === merged.team_id &&
+            prev.wallet === merged.wallet &&
+            JSON.stringify(prev.purchasedJokes) === JSON.stringify(merged.purchasedJokes);
+          return same ? prev : merged;
         });
 
         // If user is still unassigned, skip rounds/active call to avoid noise in waiting room.
@@ -652,38 +730,49 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // Customer-only: hydrate wallet/purchases from budget + market.
         // Use effectiveRoundId resolved via /v1/rounds/active to avoid /rounds/undefined,
-        // and throttle to avoid spamming these endpoints every poll tick.
+        // and only update local state when values actually change (avoid UI flicker).
         if (role === ('CUSTOMER' as Role) && effectiveRoundId) {
-          const now = nowMs();
-          const last = lastCustomerHydrateRef.current;
-          const shouldHydrate =
-            !last ||
-            last.roundId !== effectiveRoundId ||
-            now - last.atMs >= CUSTOMER_HYDRATE_INTERVAL_MS;
-          if (shouldHydrate) {
-            lastCustomerHydrateRef.current = { roundId: effectiveRoundId, atMs: now };
-            try {
-              const [budgetRaw, marketRaw] = await Promise.all([
-                customerService.budget(effectiveRoundId),
-                customerService.market(effectiveRoundId),
-              ]);
-              const budget: any = (budgetRaw as any)?.data ?? budgetRaw;
-              const market: any = (marketRaw as any)?.data ?? marketRaw;
-              if (!cancelled) {
-                setMarketItems(market?.items ?? []);
-                setUser(prev => {
-                  if (!prev) return prev;
-                  // Only patch customer fields; keep role/team assignment from polling.
-                  return {
-                    ...prev,
-                    wallet: typeof budget?.remaining_budget === 'number' ? budget.remaining_budget : prev.wallet,
-                    purchasedJokes: (market?.items ?? []).filter((i: any) => i.is_bought_by_me).map((i: any) => String(i.joke_id)),
-                  };
-                });
-              }
-            } catch {
-              // ignore customer hydration errors (will surface on action)
+          try {
+            const [budgetRaw, marketRaw] = await Promise.all([
+              customerService.budget(effectiveRoundId),
+              customerService.market(effectiveRoundId),
+            ]);
+            const budget: any = (budgetRaw as any)?.data ?? budgetRaw;
+            const market: any = (marketRaw as any)?.data ?? marketRaw;
+            if (!cancelled) {
+              const items = (market?.items ?? []) as ApiMarketItem[];
+
+              // Only update market list if it actually changed (reduce renders).
+              setMarketItems(prev => {
+                if (prev.length !== items.length) return items;
+                for (let i = 0; i < prev.length; i++) {
+                  const a = prev[i];
+                  const b = items[i];
+                  if (
+                    a.joke_id !== b.joke_id ||
+                    a.is_bought_by_me !== b.is_bought_by_me ||
+                    a.team?.id !== b.team?.id
+                  ) {
+                    return items;
+                  }
+                }
+                return prev;
+              });
+
+              const nextWallet = typeof budget?.remaining_budget === 'number' ? (budget.remaining_budget as number) : null;
+              const nextPurchased = items.filter(i => i.is_bought_by_me).map(i => String(i.joke_id));
+
+              setUser(prev => {
+                if (!prev) return prev;
+                const wallet = nextWallet ?? prev.wallet;
+                const sameWallet = prev.wallet === wallet;
+                const samePurchased = JSON.stringify(prev.purchasedJokes) === JSON.stringify(nextPurchased);
+                if (sameWallet && samePurchased) return prev;
+                return { ...prev, wallet, purchasedJokes: nextPurchased };
+              });
             }
+          } catch {
+            // ignore customer hydration errors (will surface on action)
           }
         }
 
