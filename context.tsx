@@ -224,12 +224,16 @@ function normalizeInstructorStats(raw: any): ApiInstructorStatsResponse {
     cumulative_sales: mapKeys(cumulative_sales, {
       event_index: 'event_index',
       EventIndex: 'event_index',
+      team_event_index: 'event_index', // tolerate alternate indexing; not used by UI
+      TeamEventIndex: 'event_index',
       team_id: 'team_id',
       TeamId: 'team_id',
       team_name: 'team_name',
       TeamName: 'team_name',
       total_sales: 'total_sales',
       TotalSales: 'total_sales',
+      cumulative_points: 'total_sales', // backend uses cumulative_points for sales series
+      CumulativePoints: 'total_sales',
       timestamp: 'timestamp',
       Timestamp: 'timestamp',
     }),
@@ -1012,19 +1016,28 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return;
           }
           // QC queue (live work)
+          // Some backends return 404 "resource not found: batch" when queue is empty.
+          // To avoid noisy errors, check queue/count first and only call queue/next when size > 0.
           let normalizedQueue: ApiQcQueueNextResponse | null = null;
           try {
-            const rawQ = await qcService.queueNext(effectiveRound);
-            const qAny: any = rawQ;
-            const qData = (qAny?.data ?? qAny) as any;
-            normalizedQueue = qData
-              ? {
-                  batch: qData.batch,
-                  jokes: Array.isArray(qData.jokes) ? qData.jokes : [],
-                  queue_size: qData.queue_size ?? 0,
-                }
-              : null;
-            if (!cancelled) setQcQueue(normalizedQueue);
+            const countRaw = await qcService.queueCount(effectiveRound);
+            const countAny: any = (countRaw as any)?.data ?? countRaw;
+            const size = Number(countAny?.queue_size ?? 0);
+            if (!size) {
+              if (!cancelled) setQcQueue(null);
+            } else {
+              const rawQ = await qcService.queueNext(effectiveRound);
+              const qAny: any = rawQ;
+              const qData = (qAny?.data ?? qAny) as any;
+              normalizedQueue = qData
+                ? {
+                    batch: qData.batch,
+                    jokes: Array.isArray(qData.jokes) ? qData.jokes : [],
+                    queue_size: qData.queue_size ?? size,
+                  }
+                : null;
+              if (!cancelled) setQcQueue(normalizedQueue);
+            }
           } catch {
             if (!cancelled) setQcQueue(null);
           }
