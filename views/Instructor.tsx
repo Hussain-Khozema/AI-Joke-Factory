@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGame } from '../context';
 import { Button, Card, RoleLayout, Modal } from '../components';
-import { Play, Pause, RefreshCw, Settings, Clock, StopCircle, GripVertical, Users, CheckCircle, Maximize2, X, Trash2 } from 'lucide-react';
+import { Play, RefreshCw, Settings, Clock, StopCircle, GripVertical, Users, CheckCircle, Maximize2, X, Trash2 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   LineChart, Line, ScatterChart, Scatter, Legend
@@ -44,6 +44,9 @@ const Instructor: React.FC = () => {
     'team' | 'rated_batches' | 'accepted_jokes' | 'total_jokes' | 'avg_score_overall' | 'total_sales'
   >('total_sales');
   const [leaderboardSortDir, setLeaderboardSortDir] = useState<'asc' | 'desc'>('desc');
+  const [rankUpTeamIds, setRankUpTeamIds] = useState<string[]>([]);
+  const prevLeaderboardPosRef = useRef<Record<string, number> | null>(null);
+  const rankUpTimersRef = useRef<Record<string, number>>({});
 
   const handleDeleteUser = async (userId: string, displayName?: string) => {
     const label = displayName ? `${displayName} (${userId})` : `user ${userId}`;
@@ -130,34 +133,70 @@ const Instructor: React.FC = () => {
 
   // --- Data Processing ---
 
-  // Leaderboard table: join total_jokes from output_vs_rejection, allow sorting by any column.
-  const totalJokesByTeamId = new Map<number, number>(
-    (instructorStats?.output_vs_rejection || []).map(r => [Number(r.team_id), Number(r.total_jokes ?? 0)]),
-  );
+  const leaderboardBase = useMemo(() => {
+    return (instructorStats?.leaderboard || []).map(row => {
+      const teamId = Number(row.team.id);
+      const teamName = teamNames[String(teamId)] || row.team.name;
+      return {
+        team_id: teamId,
+        team_name: teamName,
+        // API field name is `batches_rated`
+        rated_batches: Number((row as any).batches_rated ?? row.batches_rated ?? 0),
+        accepted_jokes: Number(row.accepted_jokes ?? 0),
+        total_jokes: Number((row as any).total_jokes ?? row.total_jokes ?? 0),
+        points: Number((row as any).points ?? row.points ?? 0),
+        total_sales: Number(row.total_sales ?? 0),
+      };
+    });
+  }, [instructorStats?.leaderboard, teamNames]);
 
-  const leaderboardBase = (instructorStats?.leaderboard || []).map(row => {
-    const teamId = Number(row.team.id);
-    const teamName = teamNames[String(teamId)] || row.team.name;
-    return {
-      team_id: teamId,
-      team_name: teamName,
-      rated_batches: Number(row.batches_rated ?? 0),
-      accepted_jokes: Number(row.accepted_jokes ?? 0),
-      total_jokes: Number(totalJokesByTeamId.get(teamId) ?? 0),
-      avg_score_overall: Number(row.avg_score_overall ?? 0),
-      total_sales: Number(row.total_sales ?? 0),
-    };
-  });
+  const leaderboardSorted = useMemo(() => {
+    return [...leaderboardBase].sort((a, b) => {
+      const dir = leaderboardSortDir === 'asc' ? 1 : -1;
+      if (leaderboardSortKey === 'team') {
+        return dir * a.team_name.localeCompare(b.team_name);
+      }
+      const av = a[leaderboardSortKey] ?? 0;
+      const bv = b[leaderboardSortKey] ?? 0;
+      return dir * (av - bv);
+    });
+  }, [leaderboardBase, leaderboardSortKey, leaderboardSortDir]);
 
-  const leaderboardSorted = [...leaderboardBase].sort((a, b) => {
-    const dir = leaderboardSortDir === 'asc' ? 1 : -1;
-    if (leaderboardSortKey === 'team') {
-      return dir * a.team_name.localeCompare(b.team_name);
+  // Flash a colorful highlight when a team moves up in the currently displayed ranking.
+  useEffect(() => {
+    const currPos: Record<string, number> = {};
+    leaderboardSorted.forEach((row, idx) => {
+      currPos[String(row.team_id)] = idx;
+    });
+
+    const prevPos = prevLeaderboardPosRef.current;
+    if (prevPos) {
+      const movedUpIds = Object.keys(currPos).filter(id => {
+        const prev = prevPos[id];
+        const curr = currPos[id];
+        return typeof prev === 'number' && curr < prev;
+      });
+
+      if (movedUpIds.length) {
+        setRankUpTeamIds(prev => {
+          const s = new Set(prev);
+          movedUpIds.forEach(id => s.add(id));
+          return Array.from(s);
+        });
+
+        movedUpIds.forEach(id => {
+          const existing = rankUpTimersRef.current[id];
+          if (existing) window.clearTimeout(existing);
+          rankUpTimersRef.current[id] = window.setTimeout(() => {
+            setRankUpTeamIds(prev => prev.filter(x => x !== id));
+            delete rankUpTimersRef.current[id];
+          }, 1400);
+        });
+      }
     }
-    const av = a[leaderboardSortKey] ?? 0;
-    const bv = b[leaderboardSortKey] ?? 0;
-    return dir * (av - bv);
-  });
+
+    prevLeaderboardPosRef.current = currPos;
+  }, [leaderboardSorted]);
 
   const activeTeamIds = Array.from(new Set([
     ...leaderboardBase.map(t => String(t.team_id)),
@@ -231,6 +270,140 @@ const Instructor: React.FC = () => {
   const toggleUserRole = (userId: string, currentRole: Role) => {
       const newRole = currentRole === Role.JOKE_MAKER ? Role.QUALITY_CONTROL : Role.JOKE_MAKER;
       updateUser(userId, { role: newRole });
+  };
+
+  const renderLeaderboardTable = (opts: { maxHeightClass: string; isExpanded?: boolean }) => {
+    const isExpanded = Boolean(opts.isExpanded);
+    return (
+      <div className={`overflow-x-auto ${opts.maxHeightClass} overflow-y-auto`}>
+        <table className={`min-w-full ${isExpanded ? 'text-base' : 'text-sm'}`}>
+          <thead className="sticky top-0 bg-white shadow-sm z-10">
+            <tr className="bg-gray-50 border-b">
+              <th className="px-3 py-2 text-left font-medium text-gray-500">Rank</th>
+              <th className="px-3 py-2 text-left font-medium text-gray-500">
+                <button
+                  type="button"
+                  className="inline-flex items-center hover:text-gray-800"
+                  onClick={() => {
+                    setLeaderboardSortKey('team');
+                    setLeaderboardSortDir(prev => (leaderboardSortKey === 'team' ? (prev === 'asc' ? 'desc' : 'asc') : 'asc'));
+                  }}
+                  title="Sort by Team"
+                >
+                  <span>Team</span>
+                  <span className="ml-1 w-3 text-center">
+                    {leaderboardSortKey === 'team' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                  </span>
+                </button>
+              </th>
+              <th className="px-3 py-2 text-right font-medium text-gray-500">
+                <button
+                  type="button"
+                  className="inline-flex items-center hover:text-gray-800"
+                  onClick={() => {
+                    setLeaderboardSortKey('rated_batches');
+                    setLeaderboardSortDir(prev => (leaderboardSortKey === 'rated_batches' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+                  }}
+                  title="Sort by Rated Batches"
+                >
+                  <span>Rated Batches</span>
+                  <span className="ml-1 w-3 text-center">
+                    {leaderboardSortKey === 'rated_batches' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                  </span>
+                </button>
+              </th>
+              <th className="px-3 py-2 text-right font-medium text-gray-500">
+                <button
+                  type="button"
+                  className="inline-flex items-center hover:text-gray-800"
+                  onClick={() => {
+                    setLeaderboardSortKey('accepted_jokes');
+                    setLeaderboardSortDir(prev => (leaderboardSortKey === 'accepted_jokes' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+                  }}
+                  title="Sort by Accepted Jokes"
+                >
+                  <span>Accepted Jokes</span>
+                  <span className="ml-1 w-3 text-center">
+                    {leaderboardSortKey === 'accepted_jokes' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                  </span>
+                </button>
+              </th>
+              <th className="px-3 py-2 text-right font-medium text-gray-500">
+                <button
+                  type="button"
+                  className="inline-flex items-center hover:text-gray-800"
+                  onClick={() => {
+                    setLeaderboardSortKey('total_jokes');
+                    setLeaderboardSortDir(prev => (leaderboardSortKey === 'total_jokes' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+                  }}
+                  title="Sort by Total Jokes"
+                >
+                  <span>Total Jokes</span>
+                  <span className="ml-1 w-3 text-center">
+                    {leaderboardSortKey === 'total_jokes' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                  </span>
+                </button>
+              </th>
+              <th className="px-3 py-2 text-right font-medium text-gray-500">
+                <button
+                  type="button"
+                  className="inline-flex items-center hover:text-gray-800"
+                  onClick={() => {
+                    setLeaderboardSortKey('points');
+                    setLeaderboardSortDir(prev => (leaderboardSortKey === 'points' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+                  }}
+                  title="Sort by Points"
+                >
+                  <span>Points</span>
+                  <span className="ml-1 w-3 text-center">
+                    {leaderboardSortKey === 'points' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                  </span>
+                </button>
+              </th>
+              <th className="px-3 py-2 text-right font-medium text-gray-500">
+                <button
+                  type="button"
+                  className="inline-flex items-center hover:text-gray-800"
+                  onClick={() => {
+                    setLeaderboardSortKey('total_sales');
+                    setLeaderboardSortDir(prev => (leaderboardSortKey === 'total_sales' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+                  }}
+                  title="Sort by Total Sales"
+                >
+                  <span>Total Sales</span>
+                  <span className="ml-1 w-3 text-center">
+                    {leaderboardSortKey === 'total_sales' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                  </span>
+                </button>
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {leaderboardSorted.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-3 py-6 text-center text-gray-400 italic">
+                  No leaderboard data yet.
+                </td>
+              </tr>
+            )}
+            {leaderboardSorted.map((row, idx) => (
+              <tr
+                key={String(row.team_id)}
+                className={`hover:bg-gray-50 ${rankUpTeamIds.includes(String(row.team_id)) ? 'jf-leaderboard-rankup' : ''}`}
+              >
+                <td className="px-3 py-2 font-mono text-gray-700">{idx + 1}</td>
+                <td className="px-3 py-2 font-semibold text-gray-900">{row.team_name}</td>
+                <td className="px-3 py-2 text-right text-gray-800">{row.rated_batches}</td>
+                <td className="px-3 py-2 text-right text-gray-800">{row.accepted_jokes}</td>
+                <td className="px-3 py-2 text-right text-gray-800">{row.total_jokes}</td>
+                <td className="px-3 py-2 text-right font-semibold text-indigo-700">{row.points}</td>
+                <td className="px-3 py-2 text-right font-bold text-emerald-700">{row.total_sales}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
   };
 
   // Render Charts Helper
@@ -347,12 +520,27 @@ const Instructor: React.FC = () => {
         <Modal 
             isOpen={!!expandedChart} 
             onClose={() => setExpandedChart(null)} 
-            title="Expanded Chart View"
+            title={expandedChart === 'leaderboard' ? 'Leaderboard' : 'Expanded Chart View'}
             maxWidth="max-w-[90vw]"
         >
-            <div className="h-[75vh] w-full">
+            {expandedChart === 'leaderboard' ? (
+              <div className="h-[75vh] w-full flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-2 bg-slate-100 px-4 py-2 rounded-lg text-slate-700 font-mono text-xl">
+                    <Clock size={20} />
+                    <span>{formatTime(config.elapsedTime)}</span>
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    Sorted by <span className="font-semibold text-gray-700">{leaderboardSortKey}</span> ({leaderboardSortDir})
+                  </div>
+                </div>
+                {renderLeaderboardTable({ maxHeightClass: 'max-h-[65vh]', isExpanded: true })}
+              </div>
+            ) : (
+              <div className="h-[75vh] w-full">
                 {expandedChart && renderChart(expandedChart)}
-            </div>
+              </div>
+            )}
         </Modal>
 
         {/* Lobby Management Panel */}
@@ -430,14 +618,24 @@ const Instructor: React.FC = () => {
               </div>
 
               <div className="flex items-center space-x-2">
-                 <Button 
-                   onClick={() => { if (!config.isActive) setGameActive(true); }}
-                   disabled={config.isActive}
-                   variant={config.isActive ? 'secondary' : 'success'}
-                   className="w-32 flex justify-center items-center gap-2"
-                 >
-                  {config.isActive ? <><Pause size={16} /> Pause</> : <><Play size={16} /> Start</>}
-                 </Button>
+                 {!config.isActive ? (
+                   <Button
+                     onClick={() => setGameActive(true)}
+                     variant="success"
+                     className="w-32 flex justify-center items-center gap-2"
+                   >
+                     <Play size={16} /> Start
+                   </Button>
+                 ) : (
+                   <Button
+                     disabled
+                     variant="secondary"
+                     className="w-32 flex justify-center items-center gap-2"
+                     title="Round is active"
+                   >
+                     Active
+                   </Button>
+                 )}
                  
                  <Button 
                    onClick={() => endRound()}
@@ -681,132 +879,22 @@ const Instructor: React.FC = () => {
           </Card>
 
           {/* Leaderboard (full width) */}
-          <Card className="xl:col-span-2" title="Leaderboard">
-            <div className="overflow-x-auto max-h-80 overflow-y-auto">
-              <table className="min-w-full text-sm">
-                <thead className="sticky top-0 bg-white shadow-sm z-10">
-                  <tr className="bg-gray-50 border-b">
-                    <th className="px-3 py-2 text-left font-medium text-gray-500">Rank</th>
-                    <th className="px-3 py-2 text-left font-medium text-gray-500">
-                      <button
-                        type="button"
-                        className="inline-flex items-center hover:text-gray-800"
-                        onClick={() => {
-                          setLeaderboardSortKey('team');
-                          setLeaderboardSortDir(prev => (leaderboardSortKey === 'team' ? (prev === 'asc' ? 'desc' : 'asc') : 'asc'));
-                        }}
-                        title="Sort by Team"
-                      >
-                        <span>Team</span>
-                        <span className="ml-1 w-3 text-center">
-                          {leaderboardSortKey === 'team' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
-                        </span>
-                      </button>
-                    </th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-500">
-                      <button
-                        type="button"
-                        className="inline-flex items-center hover:text-gray-800"
-                        onClick={() => {
-                          setLeaderboardSortKey('rated_batches');
-                          setLeaderboardSortDir(prev => (leaderboardSortKey === 'rated_batches' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
-                        }}
-                        title="Sort by Rated Batches"
-                      >
-                        <span>Rated Batches</span>
-                        <span className="ml-1 w-3 text-center">
-                          {leaderboardSortKey === 'rated_batches' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
-                        </span>
-                      </button>
-                    </th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-500">
-                      <button
-                        type="button"
-                        className="inline-flex items-center hover:text-gray-800"
-                        onClick={() => {
-                          setLeaderboardSortKey('accepted_jokes');
-                          setLeaderboardSortDir(prev => (leaderboardSortKey === 'accepted_jokes' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
-                        }}
-                        title="Sort by Accepted Jokes"
-                      >
-                        <span>Accepted Jokes</span>
-                        <span className="ml-1 w-3 text-center">
-                          {leaderboardSortKey === 'accepted_jokes' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
-                        </span>
-                      </button>
-                    </th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-500">
-                      <button
-                        type="button"
-                        className="inline-flex items-center hover:text-gray-800"
-                        onClick={() => {
-                          setLeaderboardSortKey('total_jokes');
-                          setLeaderboardSortDir(prev => (leaderboardSortKey === 'total_jokes' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
-                        }}
-                        title="Sort by Total Jokes"
-                      >
-                        <span>Total Jokes</span>
-                        <span className="ml-1 w-3 text-center">
-                          {leaderboardSortKey === 'total_jokes' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
-                        </span>
-                      </button>
-                    </th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-500">
-                      <button
-                        type="button"
-                        className="inline-flex items-center hover:text-gray-800"
-                        onClick={() => {
-                          setLeaderboardSortKey('avg_score_overall');
-                          setLeaderboardSortDir(prev => (leaderboardSortKey === 'avg_score_overall' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
-                        }}
-                        title="Sort by Average Score"
-                      >
-                        <span>Avg Score</span>
-                        <span className="ml-1 w-3 text-center">
-                          {leaderboardSortKey === 'avg_score_overall' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
-                        </span>
-                      </button>
-                    </th>
-                    <th className="px-3 py-2 text-right font-medium text-gray-500">
-                      <button
-                        type="button"
-                        className="inline-flex items-center hover:text-gray-800"
-                        onClick={() => {
-                          setLeaderboardSortKey('total_sales');
-                          setLeaderboardSortDir(prev => (leaderboardSortKey === 'total_sales' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
-                        }}
-                        title="Sort by Total Sales"
-                      >
-                        <span>Total Sales</span>
-                        <span className="ml-1 w-3 text-center">
-                          {leaderboardSortKey === 'total_sales' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
-                        </span>
-                      </button>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {leaderboardSorted.length === 0 && (
-                    <tr>
-                      <td colSpan={7} className="px-3 py-6 text-center text-gray-400 italic">
-                        No leaderboard data yet.
-                      </td>
-                    </tr>
-                  )}
-                  {leaderboardSorted.map((row, idx) => (
-                    <tr key={String(row.team_id)} className="hover:bg-gray-50">
-                      <td className="px-3 py-2 font-mono text-gray-700">{idx + 1}</td>
-                      <td className="px-3 py-2 font-semibold text-gray-900">{row.team_name}</td>
-                      <td className="px-3 py-2 text-right text-gray-800">{row.rated_batches}</td>
-                      <td className="px-3 py-2 text-right text-gray-800">{row.accepted_jokes}</td>
-                      <td className="px-3 py-2 text-right text-gray-800">{row.total_jokes}</td>
-                      <td className="px-3 py-2 text-right text-gray-800">{row.avg_score_overall.toFixed(1)}</td>
-                      <td className="px-3 py-2 text-right font-bold text-emerald-700">{row.total_sales}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          <Card
+            className="xl:col-span-2"
+            title="Leaderboard"
+            action={
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setExpandedChart('leaderboard')}
+                  className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
+                  title="Expand leaderboard"
+                >
+                  <Maximize2 size={18} />
+                </button>
+              </div>
+            }
+          >
+            {renderLeaderboardTable({ maxHeightClass: 'max-h-80' })}
           </Card>
           
           {/* 2) Cumulative Sales Over Time */}
