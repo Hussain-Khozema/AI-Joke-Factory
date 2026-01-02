@@ -42,9 +42,13 @@ export const instructorService = {
 
   updateRoundConfig(
     round_id: RoundId,
-    body: { customer_budget: number; batch_size: number; is_popped_active?: boolean },
+    body: { customer_budget: number; batch_size: number },
   ): Promise<ApiInstructorRoundConfigResponse> {
     return apiRequest<ApiInstructorRoundConfigResponse>(`/v1/instructor/rounds/${round_id}/config`, { method: 'POST', body });
+  },
+
+  popups(round_id: RoundId, body: { is_popped_active: boolean }): Promise<ApiInstructorRoundConfigResponse> {
+    return apiRequest<ApiInstructorRoundConfigResponse>(`/v1/instructor/rounds/${round_id}/popups`, { method: 'POST', body });
   },
 
   start(round_id: RoundId, body: { customer_budget: number; batch_size: number }): Promise<void> {

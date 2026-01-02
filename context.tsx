@@ -31,7 +31,7 @@ const LS_DISPLAY_NAME = 'joke_factory_display_name';
 const LS_SUBMITTED_BATCH_JOKES = 'joke_factory_submitted_batch_jokes_v1';
 const LS_QC_RATED_HISTORY = 'joke_factory_qc_rated_history_v1';
 
-const DEFAULT_ROUND2_BATCH_LIMIT = 6;
+const DEFAULT_ROUND2_BATCH_LIMIT = 10;
 
 // Helper to init team names (fallback, will be replaced by /v1/teams where possible)
 const INITIAL_TEAM_NAMES: Record<string, string> = {};
@@ -355,7 +355,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     elapsedTime: 0,
     customerBudget: 10,
     round1BatchSize: 5,
-    round2BatchLimit: 6,
+    round2BatchLimit: DEFAULT_ROUND2_BATCH_LIMIT,
   });
 
   const [config, setConfig] = useState<GameConfig>(initialConfig());
@@ -1106,6 +1106,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const addBatch = async (jokeContents: string[]) => {
     if (!user || !roundId || !user.team_id) return;
+    // Round 2: enforce max batch size (UI also enforces, but this guards refresh/paste edge cases).
+    if (config.round === 2 && jokeContents.length > config.round2BatchLimit) {
+      alert(`Round 2 allows up to ${config.round2BatchLimit} jokes per batch.`);
+      return;
+    }
 
     try {
       const created = await jmService.createBatch(roundId, { team_id: user.team_id, jokes: jokeContents });
@@ -1348,6 +1353,27 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return null;
   };
 
+  const ensureInstructorRoundIdForRoundNumber = async (roundNumber: number): Promise<RoundId | null> => {
+    if (!user || user.role !== ('INSTRUCTOR' as Role)) return null;
+    // Prefer resolving by round_number from /v1/rounds/active (supports separate ids for round 1 vs round 2).
+    try {
+      const active = await sessionService.activeRound();
+      const payload: any = active as any;
+      const rounds = Array.isArray(payload?.data?.rounds ?? payload?.rounds) ? (payload?.data?.rounds ?? payload?.rounds) : [];
+      const match = rounds.find((r: any) => Number(r?.round_number) === Number(roundNumber));
+      const rid = (match?.id ?? null) as RoundId | null;
+      if (rid) {
+        setRoundId(rid);
+        return rid;
+      }
+    } catch {
+      // ignore
+    }
+
+    // Fallback: use session/me (older backends).
+    return await ensureInstructorRoundId();
+  };
+
   const setGameActive = async (isActive: boolean) => {
     // Backend schema supports start/end (no pause). We map `Start` to /start.
     // `Pause` remains local-only until backend supports a pause endpoint.
@@ -1355,7 +1381,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setConfig(prev => ({ ...prev, isActive }));
       return;
     }
-    const rid = await ensureInstructorRoundId();
+    const rid = isActive ? await ensureInstructorRoundIdForRoundNumber(config.round) : await ensureInstructorRoundId();
     if (!rid) {
       alert('Missing round id; please refresh and try again.');
       return;
@@ -1386,19 +1412,15 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updateConfig({ showTeamPopup: show });
       return;
     }
-    const rid = await ensureInstructorRoundId();
+    const rid = await ensureInstructorRoundIdForRoundNumber(config.round);
     if (!rid) {
       alert('Missing round id; please refresh and try again.');
       return;
     }
     try {
-      const batch_size = config.round === 2 ? config.round2BatchLimit : config.round1BatchSize;
-      await instructorService.updateRoundConfig(rid, {
-        customer_budget: config.customerBudget,
-        batch_size,
-        is_popped_active: show,
-      });
-      updateConfig({ showTeamPopup: show });
+      const resp = await instructorService.popups(rid, { is_popped_active: show });
+      const roundAny: any = (resp as any)?.data?.round ?? (resp as any)?.round ?? resp;
+      updateConfig({ showTeamPopup: Boolean(roundAny?.is_popped_active ?? show) });
     } catch {
       alert('Failed to update popup state.');
     }
@@ -1406,7 +1428,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const endRound = async () => {
     if (!user || user.role !== ('INSTRUCTOR' as Role)) return;
-    const rid = await ensureInstructorRoundId();
+    const rid = await ensureInstructorRoundIdForRoundNumber(config.round);
     if (!rid) {
       alert('Missing round id; please refresh and try again.');
       return;

@@ -625,9 +625,33 @@ function route(
       }
       db.round.customer_budget = customer_budget;
       db.round.batch_size = batch_size;
-      if (typeof body.is_popped_active === 'boolean') {
-        db.round.is_popped_active = body.is_popped_active;
+      persistDb(db);
+      return ok(
+        {
+          data: {
+            round: {
+              id: db.round.id,
+              round_number: db.round.round_number,
+              status: db.round.status,
+              customer_budget: db.round.customer_budget,
+              batch_size: db.round.batch_size,
+              started_at: db.round.started_at,
+              ended_at: db.round.ended_at,
+              created_at: isoNow(),
+              is_popped_active: db.round.is_popped_active ?? false,
+            },
+          },
+        },
+        200,
+      );
+    }
+
+    if (method === 'POST' && sub === '/popups') {
+      const body = (opts.body ?? {}) as { is_popped_active?: boolean };
+      if (typeof body.is_popped_active !== 'boolean') {
+        return err(400, 'INVALID_REQUEST', 'is_popped_active must be a boolean.');
       }
+      db.round.is_popped_active = body.is_popped_active;
       persistDb(db);
       return ok(
         {
@@ -745,6 +769,10 @@ function route(
 
       // Round 1 strict batch size
       if (db.round.round_number === 1 && jokes.length !== db.round.batch_size) {
+        return err(400, 'INVALID_BATCH_SIZE', 'Invalid batch size for this round.');
+      }
+      // Round 2 max batch size
+      if (db.round.round_number === 2 && jokes.length > db.round.batch_size) {
         return err(400, 'INVALID_BATCH_SIZE', 'Invalid batch size for this round.');
       }
 
