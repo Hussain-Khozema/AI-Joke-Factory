@@ -356,6 +356,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [instructorLobby, setInstructorLobby] = useState<ApiInstructorLobbyResponse | null>(null);
   const [instructorStats, setInstructorStats] = useState<ApiInstructorStatsResponse | null>(null);
   const [qcQueue, setQcQueue] = useState<ApiQcQueueNextResponse | null>(null);
+  const teamSummaryUnsupportedRef = useRef<boolean>(false);
 
   // Local caches to preserve UI that expects joke text (API does not return it for batch history).
   const submittedBatchJokesRef = useRef<Record<string, string[]>>({});
@@ -497,6 +498,22 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   isActive && selectedRound?.started_at
                     ? Math.max(0, Math.floor((nowMs() - Date.parse(selectedRound.started_at)) / 1000))
                     : prev.elapsedTime;
+
+                // Only trust backend-provided config numbers once the round has started (or ended).
+                // Before start, some backends return placeholder values like { customer_budget: 0, batch_size: 1 }.
+                const shouldUseBackendConfig = isActive || normalizedStatus === 'ENDED';
+                const nextCustomerBudget =
+                  shouldUseBackendConfig && Number(selectedRound?.customer_budget) > 0
+                    ? Number(selectedRound?.customer_budget)
+                    : prev.customerBudget;
+                const nextRound1BatchSize =
+                  shouldUseBackendConfig && Number(r1?.batch_size) > 1
+                    ? Number(r1?.batch_size)
+                    : prev.round1BatchSize;
+                const nextRound2BatchLimit =
+                  shouldUseBackendConfig && Number(r2?.batch_size) > 1
+                    ? Number(r2?.batch_size)
+                    : (prev.round2BatchLimit ?? DEFAULT_ROUND2_BATCH_LIMIT);
                 return {
                   ...prev,
                   status: isActive ? 'PLAYING' : (round1Status === 'ENDED' ? 'PLAYING' : 'LOBBY'),
@@ -505,9 +522,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   showTeamPopup: popupActive,
                   startTime: isActive && selectedRound?.started_at ? Date.parse(selectedRound.started_at) : null,
                   elapsedTime: elapsed,
-                  customerBudget: selectedRound?.customer_budget ?? prev.customerBudget,
-                  round1BatchSize: r1?.batch_size ?? prev.round1BatchSize,
-                  round2BatchLimit: r2?.batch_size ?? prev.round2BatchLimit ?? DEFAULT_ROUND2_BATCH_LIMIT,
+                  customerBudget: nextCustomerBudget,
+                  round1BatchSize: nextRound1BatchSize,
+                  round2BatchLimit: nextRound2BatchLimit,
                 };
               });
             }
@@ -861,17 +878,43 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // cannot fetch team data without round id; wait for next poll
             return;
           }
-          try {
-            const [summaryRaw, listRaw] = await Promise.all([
-              jmService.teamSummary(effectiveRound, me.assignment.team_id),
-              jmService.listTeamBatches(effectiveRound, me.assignment.team_id),
-            ]);
+          // Avoid spamming endpoints that require an ACTIVE round.
+          // Also allow ENDED so teams can still view history where supported.
+          const canFetchTeamData = isActive || normalizedStatus === 'ENDED';
+          if (!canFetchTeamData) {
+            // Still allow Round 2 popup roster to show teammates even when round isn't active.
             if (!cancelled) {
-              const summaryData: any = (summaryRaw as any)?.data ?? summaryRaw;
+              if (popupActive) {
+                const teammates = Array.isArray(me.teammates) ? me.teammates : [];
+                const users: User[] = [
+                  nextUser,
+                  ...teammates.map(t =>
+                    makeUser(
+                      { user_id: Number(t.user_id) as UserId, display_name: String(t.display_name ?? '') },
+                      toRole(t.role),
+                      me.assignment.team_id as TeamId,
+                    ),
+                  ),
+                ];
+                setRoster(users);
+              } else {
+                setRoster([nextUser]);
+              }
+            }
+            return;
+          }
+          try {
+            const listPromise = jmService.listTeamBatches(effectiveRound, me.assignment.team_id);
+            const summaryPromise = teamSummaryUnsupportedRef.current
+              ? Promise.resolve(null)
+              : jmService.teamSummary(effectiveRound, me.assignment.team_id);
+            const [summaryRaw, listRaw] = await Promise.all([summaryPromise, listPromise]);
+            if (!cancelled) {
+              const summaryData: any = summaryRaw ? ((summaryRaw as any)?.data ?? summaryRaw) : null;
               const listData: any = (listRaw as any)?.data ?? listRaw;
               const batchesArr: any[] = Array.isArray(listData?.batches) ? listData.batches : [];
 
-              setTeamSummary(summaryData as any);
+              if (summaryData) setTeamSummary(summaryData as any);
               const roundNumber = apiRoundNumber ?? config.round ?? 1;
               const mapped = batchesArr.map(b =>
                 mapBatchFromTeamList(
@@ -889,29 +932,30 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }, {} as Record<string, Batch>);
               setBatches(Object.values(merged).sort((a, b) => (a.batch_id - b.batch_id)));
             }
-          } catch {
+          } catch (e) {
+            // If backend doesn't implement team summary, stop calling it.
+            if (e instanceof ApiError && (e.status === 404 || e.code === 'NOT_FOUND')) {
+              teamSummaryUnsupportedRef.current = true;
+            }
             // ignore; action will surface
           }
 
           // Round 2: show team popup members when backend says popup is active.
           if (popupActive) {
-            try {
-              const raw = await sessionService.myTeam(effectiveRound);
-              const anyRaw: any = raw;
-              const data: any = anyRaw?.data ?? anyRaw;
-              const members: any[] = Array.isArray(data?.members) ? data.members : [];
-              if (!cancelled) {
-                const users = members.map(m =>
+            // Use /session/me teammates to populate popup (no lobby fetch).
+            const teammates = Array.isArray(me.teammates) ? me.teammates : [];
+            if (!cancelled) {
+              const users: User[] = [
+                nextUser,
+                ...teammates.map(t =>
                   makeUser(
-                    { user_id: Number(m.user_id) as UserId, display_name: String(m.display_name ?? '') },
-                    toRole(m.role),
-                    (m.team_id ?? me.assignment.team_id) as TeamId,
+                    { user_id: Number(t.user_id) as UserId, display_name: String(t.display_name ?? '') },
+                    toRole(t.role),
+                    me.assignment.team_id as TeamId,
                   ),
-                );
-                setRoster(users.length ? users : [nextUser]);
-              }
-            } catch {
-              if (!cancelled) setRoster([nextUser]);
+                ),
+              ];
+              setRoster(users.length ? users : [nextUser]);
             }
           } else {
             // Default: keep roster minimal (self only)
@@ -921,6 +965,34 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const effectiveRound = effectiveRoundId ?? me.round_id ?? null;
           if (!effectiveRound) {
             setQcQueue(null);
+            return;
+          }
+          // Avoid spamming endpoints that require an ACTIVE round.
+          const canFetchQcWork = isActive || normalizedStatus === 'ENDED';
+          if (!canFetchQcWork) {
+            if (!cancelled) setQcQueue(null);
+            // Still allow popup roster + local rated history.
+            if (!cancelled) {
+              const hist = Object.values(qcRatedHistoryRef.current);
+              setBatches(hist);
+              if (popupActive) {
+                const popupTeamId = (me.assignment.team_id ?? null) as TeamId | null;
+                const teammates = Array.isArray(me.teammates) ? me.teammates : [];
+                const users: User[] = [
+                  nextUser,
+                  ...teammates.map(t =>
+                    makeUser(
+                      { user_id: Number(t.user_id) as UserId, display_name: String(t.display_name ?? '') },
+                      toRole(t.role),
+                      (popupTeamId ?? null) as TeamId,
+                    ),
+                  ),
+                ];
+                setRoster(users.length ? users : [nextUser]);
+              } else {
+                setRoster([nextUser]);
+              }
+            }
             return;
           }
           // QC queue (live work)
@@ -945,33 +1017,36 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const summaryTeamId = (normalizedQueue?.batch?.team_id ?? me.assignment?.team_id ?? null) as TeamId | null;
           if (summaryTeamId) {
             try {
-              const ts = await jmService.teamSummary(effectiveRound, summaryTeamId);
-              if (!cancelled) {
-                setTeamSummary((ts as any)?.data ?? ts ?? null);
+              if (!teamSummaryUnsupportedRef.current) {
+                const ts = await jmService.teamSummary(effectiveRound, summaryTeamId);
+                if (!cancelled) {
+                  setTeamSummary((ts as any)?.data ?? ts ?? null);
+                }
               }
-            } catch {
-              // ignore summary failures; will retry on next poll
+            } catch (e) {
+              if (e instanceof ApiError && (e.status === 404 || e.code === 'NOT_FOUND')) {
+                teamSummaryUnsupportedRef.current = true;
+              }
+              // ignore summary failures; will retry on next poll if supported
             }
           }
 
           if (popupActive) {
-            try {
-              const raw = await sessionService.myTeam(effectiveRound);
-              const anyRaw: any = raw;
-              const data: any = anyRaw?.data ?? anyRaw;
-              const members: any[] = Array.isArray(data?.members) ? data.members : [];
-              if (!cancelled) {
-                const users = members.map(m =>
+            const popupTeamId = (summaryTeamId ?? me.assignment.team_id ?? null) as TeamId | null;
+            // Use /session/me teammates to populate popup (no lobby fetch).
+            const teammates = Array.isArray(me.teammates) ? me.teammates : [];
+            if (!cancelled) {
+              const users: User[] = [
+                nextUser,
+                ...teammates.map(t =>
                   makeUser(
-                    { user_id: Number(m.user_id) as UserId, display_name: String(m.display_name ?? '') },
-                    toRole(m.role),
-                    (m.team_id ?? summaryTeamId ?? me.assignment.team_id ?? null) as TeamId,
+                    { user_id: Number(t.user_id) as UserId, display_name: String(t.display_name ?? '') },
+                    toRole(t.role),
+                    (popupTeamId ?? null) as TeamId,
                   ),
-                );
-                setRoster(users.length ? users : [nextUser]);
-              }
-            } catch {
-              if (!cancelled) setRoster([nextUser]);
+                ),
+              ];
+              setRoster(users.length ? users : [nextUser]);
             }
           } else {
             setRoster([nextUser]);
@@ -1540,8 +1615,18 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       if (isActive) {
         const batch_size = config.round === 2 ? config.round2BatchLimit : config.round1BatchSize;
+        const customer_budget = config.customerBudget;
+        // Prevent sending obviously invalid defaults (some backends report 0/1 before start).
+        if (!Number.isFinite(customer_budget) || customer_budget <= 0) {
+          alert('Customer budget must be greater than 0.');
+          return;
+        }
+        if (!Number.isFinite(batch_size) || batch_size <= 1) {
+          alert('Batch size must be at least 2.');
+          return;
+        }
         await instructorService.start(rid, {
-          customer_budget: config.customerBudget,
+          customer_budget,
           batch_size,
         });
       }

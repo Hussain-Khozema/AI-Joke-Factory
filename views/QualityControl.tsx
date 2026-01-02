@@ -100,11 +100,12 @@ const QualityControl: React.FC = () => {
       <Modal
         isOpen={config.round === 2 && config.showTeamPopup && !dismissedTeamPopup}
         onClose={() => setDismissedTeamPopup(true)}
-        title="Your Team"
+        title="Meet Your Team"
+        showCloseButton={false}
       >
         <div className="space-y-2">
           <p className="text-sm text-gray-600">
-            Your instructor has opened team popups. Here are your team members:
+            Great job! Go sit with your team members:
           </p>
           <div className="divide-y divide-gray-100 border border-gray-200 rounded">
             {(roster.length ? roster : (user ? [user] : [])).map(m => (
@@ -114,9 +115,6 @@ const QualityControl: React.FC = () => {
               </div>
             ))}
           </div>
-          <p className="text-xs text-gray-400">
-            You can close this popup locally; it will reappear next time the instructor opens it again.
-          </p>
         </div>
       </Modal>
 

@@ -79,6 +79,7 @@ const JokeMaker: React.FC = () => {
         isOpen={config.round === 2 && config.showTeamPopup && !dismissedTeamPopup}
         onClose={() => setDismissedTeamPopup(true)}
         title="Meet Your Team"
+        showCloseButton={false}
       >
         <div className="space-y-2">
           <p className="text-sm text-gray-600">

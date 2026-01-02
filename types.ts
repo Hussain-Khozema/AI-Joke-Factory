@@ -142,6 +142,7 @@ export interface ApiSessionMeResponse {
   round_id: RoundId;
   participant: ApiParticipant;
   assignment: { role: ApiRole | null; team_id: TeamId | null };
+  teammates?: Array<{ user_id: UserId; display_name: string; role: ApiRole }>;
 }
 
 export interface ApiInstructorLoginRequest {
