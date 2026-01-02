@@ -365,6 +365,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Polling controls
   const pollAbortRef = useRef<AbortController | null>(null);
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastCustomerHydrateRef = useRef<{ roundId: RoundId | null; atMs: number } | null>(null);
   
   const initialConfig = (): GameConfig => ({
     status: 'LOBBY', // Start in LOBBY to show setup screen
@@ -648,6 +649,43 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             round2BatchLimit: r2?.batch_size ?? prev.round2BatchLimit ?? DEFAULT_ROUND2_BATCH_LIMIT,
           };
         });
+
+        // Customer-only: hydrate wallet/purchases from budget + market.
+        // Use effectiveRoundId resolved via /v1/rounds/active to avoid /rounds/undefined,
+        // and throttle to avoid spamming these endpoints every poll tick.
+        if (role === ('CUSTOMER' as Role) && effectiveRoundId) {
+          const now = nowMs();
+          const last = lastCustomerHydrateRef.current;
+          const shouldHydrate =
+            !last ||
+            last.roundId !== effectiveRoundId ||
+            now - last.atMs >= CUSTOMER_HYDRATE_INTERVAL_MS;
+          if (shouldHydrate) {
+            lastCustomerHydrateRef.current = { roundId: effectiveRoundId, atMs: now };
+            try {
+              const [budgetRaw, marketRaw] = await Promise.all([
+                customerService.budget(effectiveRoundId),
+                customerService.market(effectiveRoundId),
+              ]);
+              const budget: any = (budgetRaw as any)?.data ?? budgetRaw;
+              const market: any = (marketRaw as any)?.data ?? marketRaw;
+              if (!cancelled) {
+                setMarketItems(market?.items ?? []);
+                setUser(prev => {
+                  if (!prev) return prev;
+                  // Only patch customer fields; keep role/team assignment from polling.
+                  return {
+                    ...prev,
+                    wallet: typeof budget?.remaining_budget === 'number' ? budget.remaining_budget : prev.wallet,
+                    purchasedJokes: (market?.items ?? []).filter((i: any) => i.is_bought_by_me).map((i: any) => String(i.joke_id)),
+                  };
+                });
+              }
+            } catch {
+              // ignore customer hydration errors (will surface on action)
+            }
+          }
+        }
 
         // Role-specific data
         if (role === ('INSTRUCTOR' as Role)) {

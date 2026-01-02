@@ -634,7 +634,7 @@ const Instructor: React.FC = () => {
                             disabled={selectedCustomerCount === null}
                             className="w-full flex justify-center items-center gap-2"
                         >
-                            <CheckCircle size={16} /> Auto-Assign & Start
+                            <CheckCircle size={16} /> Auto-Assign
                         </Button>
                     </div>
                 </div>
