@@ -258,12 +258,43 @@ const Instructor: React.FC = () => {
       (instructorStats?.cumulative_sales && instructorStats.cumulative_sales.length > 0)
         ? instructorStats.cumulative_sales
         : localSalesOverTime;
-    const grouped: Record<number, any> = {};
-    events.forEach(ev => {
-      if (!grouped[ev.event_index]) grouped[ev.event_index] = { index: ev.event_index };
-      grouped[ev.event_index][String(ev.team_id)] = ev.total_sales;
-    });
-    return Object.values(grouped).sort((a: any, b: any) => a.index - b.index);
+    // Build a dense series so ALL teams have a value at every event_index.
+    // This ensures every team line is visible even if the backend only emits events for some teams.
+    const byEvent: Record<number, Record<string, number>> = {};
+    for (const ev of events) {
+      const idx = Number((ev as any).event_index);
+      if (!Number.isFinite(idx)) continue;
+      if (!byEvent[idx]) byEvent[idx] = {};
+      byEvent[idx][String(ev.team_id)] = Number(ev.total_sales ?? 0);
+    }
+
+    const eventIndices = Object.keys(byEvent).map(n => Number(n)).filter(n => Number.isFinite(n)).sort((a, b) => a - b);
+    if (eventIndices.length === 0) {
+      // still render a baseline so lines can appear once data arrives
+      const base: any = { index: 0 };
+      visibleTeamIds.forEach(tid => { base[String(tid)] = 0; });
+      return [base];
+    }
+
+    const last: Record<string, number> = {};
+    visibleTeamIds.forEach(tid => { last[String(tid)] = 0; });
+
+    const rows: any[] = [];
+    // Baseline at 0 so single-point series are still visible as a flat line.
+    const base: any = { index: 0 };
+    visibleTeamIds.forEach(tid => { base[String(tid)] = 0; });
+    rows.push(base);
+
+    for (const idx of eventIndices) {
+      const updates = byEvent[idx] || {};
+      for (const tid of Object.keys(updates)) {
+        last[tid] = updates[tid];
+      }
+      const row: any = { index: idx };
+      visibleTeamIds.forEach(tid => { row[String(tid)] = last[String(tid)] ?? 0; });
+      rows.push(row);
+    }
+    return rows;
   })();
 
   const sizeVsQualityData = (instructorStats?.batch_quality_by_size || []).map(item => ({
@@ -462,11 +493,19 @@ const Instructor: React.FC = () => {
         case 'sales':
             return (
                <ResponsiveContainer width="100%" height="100%">
-                 <LineChart data={cumulativeSalesData} margin={{ bottom: 20, left: 48, right: 16 }}>
+                 <LineChart data={cumulativeSalesData} margin={{ top: 12, bottom: 20, left: 48, right: 16 }}>
                    <CartesianGrid strokeDasharray="3 3" />
                    <XAxis dataKey="index" label={{ value: 'Event Sequence', position: 'insideBottom', offset: -10 }} />
                    <YAxis
                      width={44}
+                     domain={[
+                       0,
+                       (dataMax: number) => {
+                         const m = Number.isFinite(dataMax) ? dataMax : 0;
+                         return Math.max(1, Math.ceil(m * 1.1));
+                       },
+                     ]}
+                     padding={{ top: 10, bottom: 4 }}
                      label={{ value: 'Cum. Sales', angle: -90, position: 'insideLeft', dx: -10 }}
                    />
                    <Tooltip />

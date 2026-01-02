@@ -224,8 +224,8 @@ function normalizeInstructorStats(raw: any): ApiInstructorStatsResponse {
     cumulative_sales: mapKeys(cumulative_sales, {
       event_index: 'event_index',
       EventIndex: 'event_index',
-      team_event_index: 'event_index', // tolerate alternate indexing; not used by UI
-      TeamEventIndex: 'event_index',
+      team_event_index: 'team_event_index',
+      TeamEventIndex: 'team_event_index',
       team_id: 'team_id',
       TeamId: 'team_id',
       team_name: 'team_name',
