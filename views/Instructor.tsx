@@ -47,6 +47,11 @@ const Instructor: React.FC = () => {
   const [rankUpTeamIds, setRankUpTeamIds] = useState<string[]>([]);
   const prevLeaderboardPosRef = useRef<Record<string, number> | null>(null);
   const rankUpTimersRef = useRef<Record<string, number>>({});
+  const [localSalesOverTime, setLocalSalesOverTime] = useState<
+    Array<{ event_index: number; timestamp: string; team_id: number; team_name: string; total_sales: number }>
+  >([]);
+  const lastSalesTotalsRef = useRef<Record<string, number> | null>(null);
+  const salesEventIndexRef = useRef<number>(0);
 
   const handleDeleteUser = async (userId: string, displayName?: string) => {
     const label = displayName ? `${displayName} (${userId})` : `user ${userId}`;
@@ -140,15 +145,57 @@ const Instructor: React.FC = () => {
       return {
         team_id: teamId,
         team_name: teamName,
-        // API field name is `batches_rated`
-        rated_batches: Number((row as any).batches_rated ?? row.batches_rated ?? 0),
+        rated_batches: Number(row.batches_rated ?? 0),
         accepted_jokes: Number(row.accepted_jokes ?? 0),
-        total_jokes: Number((row as any).total_jokes ?? row.total_jokes ?? 0),
-        points: Number((row as any).points ?? row.points ?? 0),
+        total_jokes: Number(row.total_jokes ?? 0),
+        avg_score_overall: Number(row.avg_score_overall ?? 0),
         total_sales: Number(row.total_sales ?? 0),
       };
     });
   }, [instructorStats?.leaderboard, teamNames]);
+
+  // If the backend doesn't provide sales-over-time, build a local event series based on changes
+  // in `leaderboard.total_sales` (which moves up/down on buy/return).
+  useEffect(() => {
+    // Reset when round changes
+    setLocalSalesOverTime([]);
+    lastSalesTotalsRef.current = null;
+    salesEventIndexRef.current = 0;
+  }, [instructorStats?.round_id]);
+
+  useEffect(() => {
+    const backendHasSeries = (instructorStats?.cumulative_sales?.length ?? 0) > 0;
+    if (backendHasSeries) return;
+    if (leaderboardBase.length === 0) return;
+
+    const curr: Record<string, number> = {};
+    leaderboardBase.forEach(t => {
+      curr[String(t.team_id)] = Number(t.total_sales ?? 0);
+    });
+
+    const prev = lastSalesTotalsRef.current;
+    const changed =
+      !prev ||
+      Object.keys(curr).some(id => prev[id] !== curr[id]);
+    if (!changed) return;
+
+    salesEventIndexRef.current += 1;
+    const eventIndex = salesEventIndexRef.current;
+    const ts = new Date().toISOString();
+
+    setLocalSalesOverTime(prevEvents => [
+      ...prevEvents,
+      ...leaderboardBase.map(t => ({
+        event_index: eventIndex,
+        timestamp: ts,
+        team_id: Number(t.team_id),
+        team_name: String(t.team_name),
+        total_sales: Number(t.total_sales ?? 0),
+      })),
+    ]);
+
+    lastSalesTotalsRef.current = curr;
+  }, [leaderboardBase, instructorStats?.cumulative_sales]);
 
   const leaderboardSorted = useMemo(() => {
     return [...leaderboardBase].sort((a, b) => {
@@ -207,7 +254,10 @@ const Instructor: React.FC = () => {
   const visibleTeamIds = activeTeamIds.slice(0, 20);
 
   const cumulativeSalesData = (() => {
-    const events = instructorStats?.cumulative_sales || [];
+    const events =
+      (instructorStats?.cumulative_sales && instructorStats.cumulative_sales.length > 0)
+        ? instructorStats.cumulative_sales
+        : localSalesOverTime;
     const grouped: Record<number, any> = {};
     events.forEach(ev => {
       if (!grouped[ev.event_index]) grouped[ev.event_index] = { index: ev.event_index };
@@ -349,14 +399,14 @@ const Instructor: React.FC = () => {
                   type="button"
                   className="inline-flex items-center hover:text-gray-800"
                   onClick={() => {
-                    setLeaderboardSortKey('points');
-                    setLeaderboardSortDir(prev => (leaderboardSortKey === 'points' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+                    setLeaderboardSortKey('avg_score_overall');
+                    setLeaderboardSortDir(prev => (leaderboardSortKey === 'avg_score_overall' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
                   }}
-                  title="Sort by Points"
+                  title="Sort by Average Score"
                 >
-                  <span>Points</span>
+                  <span>Avg Score</span>
                   <span className="ml-1 w-3 text-center">
-                    {leaderboardSortKey === 'points' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                    {leaderboardSortKey === 'avg_score_overall' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
                   </span>
                 </button>
               </th>
@@ -396,7 +446,7 @@ const Instructor: React.FC = () => {
                 <td className="px-3 py-2 text-right text-gray-800">{row.rated_batches}</td>
                 <td className="px-3 py-2 text-right text-gray-800">{row.accepted_jokes}</td>
                 <td className="px-3 py-2 text-right text-gray-800">{row.total_jokes}</td>
-                <td className="px-3 py-2 text-right font-semibold text-indigo-700">{row.points}</td>
+                <td className="px-3 py-2 text-right text-gray-800">{row.avg_score_overall.toFixed(1)}</td>
                 <td className="px-3 py-2 text-right font-bold text-emerald-700">{row.total_sales}</td>
               </tr>
             ))}
@@ -446,6 +496,7 @@ const Instructor: React.FC = () => {
                      dataKey="quality"
                      name="Avg Quality"
                      domain={[0, 5]}
+                    padding={{ top: 12, bottom: 6 }}
                      label={{ value: 'Avg Quality', angle: -90, position: 'insideLeft', dx: -10 }}
                    />
                    <Tooltip cursor={{ strokeDasharray: '3 3' }} />
@@ -461,8 +512,8 @@ const Instructor: React.FC = () => {
                    <XAxis dataKey="seq" label={{ value: 'Batch Sequence', position: 'insideBottom', offset: -10 }} />
                    <YAxis
                      width={44}
-                     // Add a bit of headroom so points at 5.0 don't sit on the top border.
-                     domain={[0, 5.2]}
+                    // Add headroom without changing the axis max label (keep max at 5).
+                    domain={[0, 5]}
                      padding={{ top: 12, bottom: 6 }}
                      label={{ value: 'Avg Quality', angle: -90, position: 'insideLeft', dx: -10 }}
                    />

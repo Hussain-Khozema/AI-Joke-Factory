@@ -28,10 +28,13 @@ import { setMockRoundNumber } from './services/mockApi';
 
 const LS_USER_ID = 'joke_factory_user_id';
 const LS_DISPLAY_NAME = 'joke_factory_display_name';
+const LS_ROLE = 'joke_factory_role';
+const LS_ROUND_ID = 'joke_factory_round_id';
 const LS_SUBMITTED_BATCH_JOKES = 'joke_factory_submitted_batch_jokes_v1';
 const LS_QC_RATED_HISTORY = 'joke_factory_qc_rated_history_v1';
 
 const DEFAULT_ROUND2_BATCH_LIMIT = 10;
+const CUSTOMER_HYDRATE_INTERVAL_MS = 5000;
 
 // Helper to init team names (fallback, will be replaced by /v1/teams where possible)
 const INITIAL_TEAM_NAMES: Record<string, string> = {};
@@ -179,13 +182,30 @@ function normalizeInstructorStats(raw: any): ApiInstructorStatsResponse {
     points: Number(item.points ?? item.Points ?? 0),
     total_sales: Number(item.total_sales ?? item.TotalSales ?? 0),
     batches_rated: Number(item.batches_rated ?? item.BatchesRated ?? 0),
+    total_jokes: Number(item.total_jokes ?? item.TotalJokes ?? 0),
     avg_score_overall: Number(item.avg_score_overall ?? item.AvgScoreOverall ?? 0),
     accepted_jokes: Number(item.accepted_jokes ?? item.AcceptedJokes ?? 0),
   }));
 
-  const cumulative_sales = Array.isArray(data.cumulative_sales ?? data.CumulativeSales) ? (data.cumulative_sales ?? data.CumulativeSales) : [];
-  const batch_quality_by_size = Array.isArray(data.batch_quality_by_size ?? data.BatchQualityBySize) ? (data.batch_quality_by_size ?? data.BatchQualityBySize) : [];
-  const learning_curve = Array.isArray(data.learning_curve ?? data.LearningCurve) ? (data.learning_curve ?? data.LearningCurve) : [];
+  // Stats API shape varies by backend implementation. Support both naming schemes:
+  // - sales_over_time -> cumulative_sales
+  // - batch_size_quality -> batch_quality_by_size
+  // - batch_sequence_quality -> learning_curve
+  const cumulative_sales = Array.isArray(data.cumulative_sales ?? data.CumulativeSales)
+    ? (data.cumulative_sales ?? data.CumulativeSales)
+    : Array.isArray(data.sales_over_time ?? data.SalesOverTime)
+      ? (data.sales_over_time ?? data.SalesOverTime)
+      : [];
+  const batch_quality_by_size = Array.isArray(data.batch_quality_by_size ?? data.BatchQualityBySize)
+    ? (data.batch_quality_by_size ?? data.BatchQualityBySize)
+    : Array.isArray(data.batch_size_quality ?? data.BatchSizeQuality)
+      ? (data.batch_size_quality ?? data.BatchSizeQuality)
+      : [];
+  const learning_curve = Array.isArray(data.learning_curve ?? data.LearningCurve)
+    ? (data.learning_curve ?? data.LearningCurve)
+    : Array.isArray(data.batch_sequence_quality ?? data.BatchSequenceQuality)
+      ? (data.batch_sequence_quality ?? data.BatchSequenceQuality)
+      : [];
   const output_vs_rejection = Array.isArray(data.output_vs_rejection ?? data.OutputVsRejection) ? (data.output_vs_rejection ?? data.OutputVsRejection) : [];
   const revenue_vs_acceptance = Array.isArray(data.revenue_vs_acceptance ?? data.RevenueVsAcceptance) ? (data.revenue_vs_acceptance ?? data.RevenueVsAcceptance) : [];
 
@@ -389,10 +409,17 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const storedUserId = localStorage.getItem(LS_USER_ID);
     const storedName = localStorage.getItem(LS_DISPLAY_NAME);
+    const storedRole = localStorage.getItem(LS_ROLE);
+    const storedRoundId = localStorage.getItem(LS_ROUND_ID);
     if (storedUserId && storedName) {
       const uid = Number(storedUserId);
       if (!Number.isNaN(uid)) {
-        setUser(makeUser({ user_id: uid as UserId, display_name: storedName }, 'UNASSIGNED' as Role, null));
+        const role = storedRole === 'INSTRUCTOR' ? ('INSTRUCTOR' as Role) : ('UNASSIGNED' as Role);
+        setUser(makeUser({ user_id: uid as UserId, display_name: storedName }, role, null));
+        if (role === ('INSTRUCTOR' as Role) && storedRoundId) {
+          const rid = Number(storedRoundId);
+          if (!Number.isNaN(rid)) setRoundId(rid as RoundId);
+        }
       }
     }
   }, []);
@@ -535,25 +562,6 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         const teamId = role === ('UNASSIGNED' as Role) ? null : me.assignment.team_id;
         const nextUser = makeUser(me.user, role, teamId);
-
-        // Customer-only: hydrate wallet/purchases from budget + market.
-        if (role === ('CUSTOMER' as Role)) {
-          try {
-            const [budgetRaw, marketRaw] = await Promise.all([
-              customerService.budget(me.round_id),
-              customerService.market(me.round_id),
-            ]);
-            const budget: any = (budgetRaw as any)?.data ?? budgetRaw;
-            const market: any = (marketRaw as any)?.data ?? marketRaw;
-            if (!cancelled) {
-              nextUser.wallet = budget.remaining_budget;
-              nextUser.purchasedJokes = market.items.filter(i => i.is_bought_by_me).map(i => String(i.joke_id));
-              setMarketItems(market.items);
-            }
-          } catch {
-            // ignore customer hydration errors (will surface on action)
-          }
-        }
 
         setUser(prev => {
           if (!prev) return nextUser;
@@ -889,6 +897,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const joined = await sessionService.join({ display_name });
       localStorage.setItem(LS_USER_ID, String(joined.user.user_id));
       localStorage.setItem(LS_DISPLAY_NAME, joined.user.display_name);
+      localStorage.setItem(LS_ROLE, 'UNASSIGNED');
+      localStorage.removeItem(LS_ROUND_ID);
 
       // Immediately set local user to unblock router; polling will hydrate assignment.
       const next = makeUser(joined.user, 'UNASSIGNED' as Role, null);
@@ -909,6 +919,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const resp = await instructorService.login({ display_name, password });
       localStorage.setItem(LS_USER_ID, String(resp.user.user_id));
       localStorage.setItem(LS_DISPLAY_NAME, resp.user.display_name);
+      localStorage.setItem(LS_ROLE, 'INSTRUCTOR');
+      localStorage.setItem(LS_ROUND_ID, String(resp.round_id));
       const next = makeUser(
         { user_id: resp.user.user_id as UserId, display_name: resp.user.display_name },
         'INSTRUCTOR' as Role,
@@ -942,6 +954,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     localStorage.removeItem(LS_USER_ID);
     localStorage.removeItem(LS_DISPLAY_NAME);
+    localStorage.removeItem(LS_ROLE);
+    localStorage.removeItem(LS_ROUND_ID);
     setRoundId(null);
     setConfig(initialConfig());
     setRoster([]);

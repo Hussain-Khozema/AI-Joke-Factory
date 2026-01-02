@@ -282,6 +282,7 @@ export interface ApiInstructorStatsResponse {
     points: number;
     total_sales: number;
     batches_rated: number;
+    total_jokes: number;
     avg_score_overall: number;
     accepted_jokes: number;
   }>;
