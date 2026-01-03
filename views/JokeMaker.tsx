@@ -23,8 +23,12 @@ const JokeMaker: React.FC = () => {
   const myRank = teamSummary?.rank ?? '-';
 
   const isRound1 = config.round === 1;
-  const targetBatchSize = isRound1 ? config.round1BatchSize : null;
-  const maxBatchSize = isRound1 ? config.round1BatchSize : config.round2BatchLimit;
+  // Before Round 1 starts, backend may still report a placeholder batch size (often 1).
+  // For JM UX, show a sensible default (5) while paused, then switch to the real config once active.
+  const defaultRound1BatchSize = 5;
+  const round1BatchSizeForUi = (isRound1 && !config.isActive) ? defaultRound1BatchSize : config.round1BatchSize;
+  const targetBatchSize = isRound1 ? round1BatchSizeForUi : null;
+  const maxBatchSize = isRound1 ? round1BatchSizeForUi : config.round2BatchLimit;
   const isInputDisabled = currentJokes.length >= maxBatchSize || !config.isActive;
 
   const handleAddJoke = () => {

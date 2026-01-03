@@ -84,9 +84,9 @@ export const RoleLayout: React.FC<{ children: React.ReactNode }> = ({ children }
           
           <div className="flex items-center space-x-6">
              {showTeamBadge && (
-               <div className="flex items-center space-x-2 bg-gray-100 px-3 py-1 rounded-full">
-                 <span className="text-xs font-bold text-gray-500 uppercase">Team</span>
-                 <span className="font-semibold text-blue-600">{displayTeamName}</span>
+               <div className="flex items-baseline space-x-2 bg-gray-100 px-3 py-1 rounded-full">
+                 <span className="text-xs font-bold text-gray-500 uppercase leading-none">Team</span>
+                 <span className="font-semibold text-blue-600 leading-none">{displayTeamName}</span>
                </div>
              )}
              

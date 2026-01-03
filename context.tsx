@@ -335,6 +335,8 @@ interface GameContextType {
   teamSummary: ApiTeamSummaryResponse | null;
   instructorLobby: ApiInstructorLobbyResponse | null;
   instructorStats: ApiInstructorStatsResponse | null;
+  instructorStatsRound1: ApiInstructorStatsResponse | null;
+  instructorStatsRound2: ApiInstructorStatsResponse | null;
   qcQueue: ApiQcQueueNextResponse | null;
 }
 
@@ -359,8 +361,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [teamSummary, setTeamSummary] = useState<ApiTeamSummaryResponse | null>(null);
   const [instructorLobby, setInstructorLobby] = useState<ApiInstructorLobbyResponse | null>(null);
   const [instructorStats, setInstructorStats] = useState<ApiInstructorStatsResponse | null>(null);
+  const [instructorStatsByRoundNumber, setInstructorStatsByRoundNumber] = useState<Record<1 | 2, ApiInstructorStatsResponse | null>>({
+    1: null,
+    2: null,
+  });
   const [qcQueue, setQcQueue] = useState<ApiQcQueueNextResponse | null>(null);
   const teamSummaryUnsupportedRef = useRef<boolean>(false);
+  const lastInstructorStatsFetchRef = useRef<Record<number, number>>({});
 
   // Local caches to preserve UI that expects joke text (API does not return it for batch history).
   const submittedBatchJokesRef = useRef<Record<string, string[]>>({});
@@ -458,6 +465,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           let apiRoundNumber: number | undefined = undefined;
           let r1: any = null;
           let r2: any = null;
+          let r1Id: RoundId | null = null;
+          let r2Id: RoundId | null = null;
+          let r2Status: 'ACTIVE' | 'ENDED' | 'CONFIGURED' | null = null;
 
           // Prefer /rounds/active to derive round status + correct round id (supports distinct ids per round).
           try {
@@ -470,6 +480,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             r1 = rounds.find((r: any) => Number(r?.round_number) === 1) ?? null;
             r2 = rounds.find((r: any) => Number(r?.round_number) === 2) ?? null;
             round1Status = pickStatus(r1);
+            r2Status = pickStatus(r2);
+            r1Id = (r1?.id ?? null) as RoundId | null;
+            r2Id = (r2?.id ?? null) as RoundId | null;
 
             const activeRound = rounds.find((r: any) => pickStatus(r) === 'ACTIVE') ?? null;
             const selectedRound =
@@ -557,14 +570,49 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           try {
             const rawLobby = await instructorService.lobby(effectiveRoundId);
             let stats: any = null;
+
+            // Stats: keep current round stats + also cache per-round stats for Round 1/2 so the UI can
+            // view Round 1 stats during Round 2.
+            const now = nowMs();
+            const shouldFetchStatsForRound = (roundNum: 1 | 2, rid: RoundId | null, st: any) => {
+              if (!rid) return false;
+              const s = normalizeRoundStatus(st?.status) ?? null;
+              // Only bother fetching stats when the round has started or ended (backend may 404/empty otherwise).
+              if (!(s === 'ACTIVE' || s === 'ENDED')) return false;
+              const last = lastInstructorStatsFetchRef.current[roundNum] ?? 0;
+              return now - last >= 1500; // align with poll interval
+            };
+
+            const fetches: Array<Promise<{ roundNum: 1 | 2; raw: any } | null>> = [
+              (async () => {
+                if (!shouldFetchStatsForRound(1, r1Id, r1)) return null;
+                try {
+                  const raw = await instructorService.stats(r1Id as RoundId);
+                  lastInstructorStatsFetchRef.current[1] = now;
+                  return { roundNum: 1, raw };
+                } catch {
+                  return null;
+                }
+              })(),
+              (async () => {
+                if (!shouldFetchStatsForRound(2, r2Id, r2)) return null;
+                try {
+                  const raw = await instructorService.stats(r2Id as RoundId);
+                  lastInstructorStatsFetchRef.current[2] = now;
+                  return { roundNum: 2, raw };
+                } catch {
+                  return null;
+                }
+              })(),
+            ];
+
+            // Always try current round stats if we couldn't resolve per-round ids yet.
             try {
-              // Stats availability is backend-dependent; if unavailable, keep lobby data.
-              // Avoid spamming stats when round isn't active/ended (still allow if backend doesn't expose status).
               if (isActive || normalizedStatus === 'ENDED' || normalizedStatus == null) {
                 stats = await instructorService.stats(effectiveRoundId);
               }
             } catch {
-              // ignore stats failures when backend not ready / no data yet
+              // ignore stats failures
             }
 
             if (!cancelled) {
@@ -611,7 +659,32 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               };
 
               setInstructorLobby(lobbyNormalized as any);
-              if (stats) setInstructorStats(normalizeInstructorStats((stats as any)?.data ?? stats ?? null));
+              if (stats) {
+                const norm = normalizeInstructorStats((stats as any)?.data ?? stats ?? null);
+                setInstructorStats(norm);
+                // Also drop into per-round cache if we can infer the round number.
+                if (r1Id && norm.round_id === r1Id) {
+                  setInstructorStatsByRoundNumber(prev => ({ ...prev, 1: norm }));
+                } else if (r2Id && norm.round_id === r2Id) {
+                  setInstructorStatsByRoundNumber(prev => ({ ...prev, 2: norm }));
+                } else if (apiRoundNumber === 1 || apiRoundNumber === 2) {
+                  setInstructorStatsByRoundNumber(prev => ({ ...prev, [apiRoundNumber as 1 | 2]: norm }));
+                }
+              }
+
+              // Update per-round stats from fetches (if any).
+              Promise.all(fetches).then(results => {
+                if (cancelled) return;
+                const updates: Partial<Record<1 | 2, ApiInstructorStatsResponse>> = {};
+                for (const r of results) {
+                  if (!r) continue;
+                  const norm = normalizeInstructorStats((r.raw as any)?.data ?? r.raw ?? null);
+                  updates[r.roundNum] = norm;
+                }
+                if (Object.keys(updates).length) {
+                  setInstructorStatsByRoundNumber(prev => ({ ...prev, ...(updates as any) }));
+                }
+              });
 
               // Build roster for instructor drag/drop (teams + customers + unassigned)
               const rosterUsers: User[] = [];
@@ -1195,6 +1268,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setTeamSummary(null);
     setInstructorLobby(null);
     setInstructorStats(null);
+    setInstructorStatsByRoundNumber({ 1: null, 2: null });
     setQcQueue(null);
 
     // Clear local caches (avoid leaking state across users).
@@ -1767,6 +1841,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       teamSummary,
       instructorLobby,
       instructorStats,
+      instructorStatsRound1: instructorStatsByRoundNumber[1],
+      instructorStatsRound2: instructorStatsByRoundNumber[2],
       qcQueue,
     }}>
       {children}

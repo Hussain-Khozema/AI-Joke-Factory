@@ -25,6 +25,8 @@ const Instructor: React.FC = () => {
     roster, teamNames, updateTeamName, updateUser,
     calculateValidCustomerOptions, formTeams, resetToLobby
     , instructorStats
+    , instructorStatsRound1
+    , instructorStatsRound2
     , endRound
     , deleteUser
   } = useGame();
@@ -36,6 +38,12 @@ const Instructor: React.FC = () => {
 
   // Expanded Chart State
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
+  const [salesTab, setSalesTab] = useState<'R1' | 'R2' | 'BOTH'>('R2');
+  const [sequenceTab, setSequenceTab] = useState<'R1' | 'R2' | 'BOTH'>('R2');
+  const [hoveredSalesSeriesKey, setHoveredSalesSeriesKey] = useState<string | null>(null);
+  const [hoveredSequenceSeriesKey, setHoveredSequenceSeriesKey] = useState<string | null>(null);
+  const [leaderboardRoundTab, setLeaderboardRoundTab] = useState<1 | 2>((config.round === 2 ? 2 : 1) as 1 | 2);
+  const leaderboardRoundTouchedRef = useRef(false);
 
   // Session-only chart visibility (defaults back on new browser session)
   const [hiddenCharts, setHiddenCharts] = useState<ChartKey[]>([]);
@@ -138,21 +146,62 @@ const Instructor: React.FC = () => {
 
   // --- Data Processing ---
 
+  // Keep tab defaults aligned to current round (but only when user hasn't explicitly selected otherwise).
+  useEffect(() => {
+    const r = (config.round === 2 ? 2 : 1) as 1 | 2;
+    setSalesTab(prev => (prev === 'BOTH' ? prev : (r === 1 ? 'R1' : 'R2')));
+    setSequenceTab(prev => (prev === 'BOTH' ? prev : (r === 1 ? 'R1' : 'R2')));
+    if (!leaderboardRoundTouchedRef.current) setLeaderboardRoundTab(r);
+  }, [config.round]);
+
+  const statsR1 = instructorStatsRound1 ?? null;
+  const statsR2 = instructorStatsRound2 ?? null;
+  const leaderboardStatsSelected = (leaderboardRoundTab === 1 ? statsR1 : statsR2) ?? instructorStats ?? null;
+  const sizeChartStatsSelected = (() => {
+    const primary = (config.round === 2 ? statsR2 : statsR1) ?? null;
+    const secondary = (config.round === 2 ? statsR1 : statsR2) ?? null;
+    const candidates = [primary, secondary, instructorStats ?? null].filter(Boolean) as any[];
+    return candidates.find(s => (s?.batch_quality_by_size?.length ?? 0) > 0) ?? candidates[0] ?? null;
+  })();
+
   const leaderboardBase = useMemo(() => {
-    return (instructorStats?.leaderboard || []).map(row => {
-      const teamId = Number(row.team.id);
-      const teamName = teamNames[String(teamId)] || row.team.name;
-      return {
-        team_id: teamId,
-        team_name: teamName,
-        rated_batches: Number(row.batches_rated ?? 0),
-        accepted_jokes: Number(row.accepted_jokes ?? 0),
+    return (leaderboardStatsSelected?.leaderboard || []).map(row => {
+    const teamId = Number(row.team.id);
+    const teamName = teamNames[String(teamId)] || row.team.name;
+    return {
+      team_id: teamId,
+      team_name: teamName,
+      rated_batches: Number(row.batches_rated ?? 0),
+      accepted_jokes: Number(row.accepted_jokes ?? 0),
         total_jokes: Number(row.total_jokes ?? 0),
-        avg_score_overall: Number(row.avg_score_overall ?? 0),
-        total_sales: Number(row.total_sales ?? 0),
-      };
+      avg_score_overall: Number(row.avg_score_overall ?? 0),
+      total_sales: Number(row.total_sales ?? 0),
+    };
+  });
+  }, [leaderboardStatsSelected?.leaderboard, teamNames]);
+
+  const avgQualityByTeamId = useMemo(() => {
+    const out: Record<string, number> = {};
+    leaderboardBase.forEach(t => {
+      out[String(t.team_id)] = Number(t.avg_score_overall ?? 0);
     });
-  }, [instructorStats?.leaderboard, teamNames]);
+    return out;
+  }, [leaderboardBase]);
+
+  const avgQualityR1ByTeamId = useMemo(() => {
+    const out: Record<string, number> = {};
+    (statsR1?.leaderboard ?? []).forEach(row => {
+      out[String(row.team.id)] = Number(row.avg_score_overall ?? 0);
+    });
+    return out;
+  }, [statsR1?.leaderboard]);
+  const avgQualityR2ByTeamId = useMemo(() => {
+    const out: Record<string, number> = {};
+    (statsR2?.leaderboard ?? []).forEach(row => {
+      out[String(row.team.id)] = Number(row.avg_score_overall ?? 0);
+    });
+    return out;
+  }, [statsR2?.leaderboard]);
 
   // If the backend doesn't provide sales-over-time, build a local event series based on changes
   // in `leaderboard.total_sales` (which moves up/down on buy/return).
@@ -166,10 +215,17 @@ const Instructor: React.FC = () => {
   useEffect(() => {
     const backendHasSeries = (instructorStats?.cumulative_sales?.length ?? 0) > 0;
     if (backendHasSeries) return;
-    if (leaderboardBase.length === 0) return;
+    // Track sales deltas using the "current round" leaderboard (independent of the UI-only leaderboard round toggle).
+    const trackingStats = (config.round === 2 ? statsR2 : statsR1) ?? instructorStats ?? null;
+    const trackingLeaderboard = (trackingStats?.leaderboard || []).map((row: any) => ({
+      team_id: Number(row.team.id),
+      team_name: String(teamNames[String(row.team.id)] || row.team.name),
+      total_sales: Number(row.total_sales ?? 0),
+    }));
+    if (trackingLeaderboard.length === 0) return;
 
     const curr: Record<string, number> = {};
-    leaderboardBase.forEach(t => {
+    trackingLeaderboard.forEach(t => {
       curr[String(t.team_id)] = Number(t.total_sales ?? 0);
     });
 
@@ -185,7 +241,7 @@ const Instructor: React.FC = () => {
 
     setLocalSalesOverTime(prevEvents => [
       ...prevEvents,
-      ...leaderboardBase.map(t => ({
+      ...trackingLeaderboard.map(t => ({
         event_index: eventIndex,
         timestamp: ts,
         team_id: Number(t.team_id),
@@ -195,18 +251,18 @@ const Instructor: React.FC = () => {
     ]);
 
     lastSalesTotalsRef.current = curr;
-  }, [leaderboardBase, instructorStats?.cumulative_sales]);
+  }, [config.round, statsR1?.leaderboard, statsR2?.leaderboard, instructorStats?.leaderboard, instructorStats?.cumulative_sales, teamNames]);
 
   const leaderboardSorted = useMemo(() => {
     return [...leaderboardBase].sort((a, b) => {
-      const dir = leaderboardSortDir === 'asc' ? 1 : -1;
-      if (leaderboardSortKey === 'team') {
-        return dir * a.team_name.localeCompare(b.team_name);
-      }
-      const av = a[leaderboardSortKey] ?? 0;
-      const bv = b[leaderboardSortKey] ?? 0;
-      return dir * (av - bv);
-    });
+    const dir = leaderboardSortDir === 'asc' ? 1 : -1;
+    if (leaderboardSortKey === 'team') {
+      return dir * a.team_name.localeCompare(b.team_name);
+    }
+    const av = a[leaderboardSortKey] ?? 0;
+    const bv = b[leaderboardSortKey] ?? 0;
+    return dir * (av - bv);
+  });
   }, [leaderboardBase, leaderboardSortKey, leaderboardSortDir]);
 
   // Flash a colorful highlight when a team moves up in the currently displayed ranking.
@@ -247,71 +303,126 @@ const Instructor: React.FC = () => {
 
   const activeTeamIds = Array.from(new Set([
     ...leaderboardBase.map(t => String(t.team_id)),
+    ...(statsR1?.leaderboard ?? []).map(r => String(r.team.id)),
+    ...(statsR2?.leaderboard ?? []).map(r => String(r.team.id)),
     ...Object.keys(teamNames).filter(id => roster.some(u => u.team === id)),
   ])).sort((a, b) => Number(a) - Number(b));
 
   // Demo constraint: cap the displayed teams to 20.
   const visibleTeamIds = activeTeamIds.slice(0, 20);
 
-  const cumulativeSalesData = (() => {
-    const events =
-      (instructorStats?.cumulative_sales && instructorStats.cumulative_sales.length > 0)
-        ? instructorStats.cumulative_sales
-        : localSalesOverTime;
-    // Build a dense series so ALL teams have a value at every event_index.
-    // This ensures every team line is visible even if the backend only emits events for some teams.
+  const buildDenseSalesSeries = (
+    events: any[],
+    teamIds: string[],
+    keyPrefix: string,
+  ): any[] => {
     const byEvent: Record<number, Record<string, number>> = {};
     for (const ev of events) {
       const idx = Number((ev as any).event_index);
       if (!Number.isFinite(idx)) continue;
       if (!byEvent[idx]) byEvent[idx] = {};
-      byEvent[idx][String(ev.team_id)] = Number(ev.total_sales ?? 0);
+      byEvent[idx][`${keyPrefix}${String(ev.team_id)}`] = Number((ev as any).total_sales ?? 0);
     }
-
     const eventIndices = Object.keys(byEvent).map(n => Number(n)).filter(n => Number.isFinite(n)).sort((a, b) => a - b);
-    if (eventIndices.length === 0) {
-      // still render a baseline so lines can appear once data arrives
-      const base: any = { index: 0 };
-      visibleTeamIds.forEach(tid => { base[String(tid)] = 0; });
-      return [base];
-    }
-
     const last: Record<string, number> = {};
-    visibleTeamIds.forEach(tid => { last[String(tid)] = 0; });
-
+    teamIds.forEach(tid => { last[`${keyPrefix}${tid}`] = 0; });
     const rows: any[] = [];
-    // Baseline at 0 so single-point series are still visible as a flat line.
     const base: any = { index: 0 };
-    visibleTeamIds.forEach(tid => { base[String(tid)] = 0; });
+    teamIds.forEach(tid => { base[`${keyPrefix}${tid}`] = 0; });
     rows.push(base);
-
     for (const idx of eventIndices) {
       const updates = byEvent[idx] || {};
-      for (const tid of Object.keys(updates)) {
-        last[tid] = updates[tid];
-      }
+      for (const k of Object.keys(updates)) last[k] = updates[k];
       const row: any = { index: idx };
-      visibleTeamIds.forEach(tid => { row[String(tid)] = last[String(tid)] ?? 0; });
+      teamIds.forEach(tid => { row[`${keyPrefix}${tid}`] = last[`${keyPrefix}${tid}`] ?? 0; });
       rows.push(row);
     }
     return rows;
+  };
+
+  const mergeByIndex = (a: any[], b: any[]): any[] => {
+    const m = new Map<number, any>();
+    for (const row of a) m.set(Number(row.index), { ...(m.get(Number(row.index)) ?? {}), ...row });
+    for (const row of b) m.set(Number(row.index), { ...(m.get(Number(row.index)) ?? {}), ...row });
+    return Array.from(m.values()).sort((x, y) => Number(x.index) - Number(y.index));
+  };
+
+  const cumulativeSalesData = (() => {
+    const eventsR1 = statsR1?.cumulative_sales ?? [];
+    const eventsR2 = statsR2?.cumulative_sales ?? [];
+    const fallbackEvents =
+      (instructorStats?.cumulative_sales && instructorStats.cumulative_sales.length > 0)
+        ? instructorStats.cumulative_sales
+        : localSalesOverTime;
+    const ids = visibleTeamIds;
+    if (salesTab === 'BOTH') {
+      const s1 = buildDenseSalesSeries(eventsR1, ids, 'r1-');
+      const s2 = buildDenseSalesSeries(eventsR2, ids, 'r2-');
+      return mergeByIndex(s1, s2);
+    }
+    if (salesTab === 'R1') return buildDenseSalesSeries(eventsR1, ids, '');
+    if (salesTab === 'R2') return buildDenseSalesSeries(eventsR2, ids, '');
+    return buildDenseSalesSeries(fallbackEvents, ids, '');
   })();
 
-  const sizeVsQualityData = (instructorStats?.batch_quality_by_size || []).map(item => ({
+  const sizeVsQualityData = (sizeChartStatsSelected?.batch_quality_by_size || []).map(item => ({
     size: item.batch_size,
     quality: item.avg_score,
     team: String(item.team_id),
     name: item.team_name,
   }));
 
-  const sequenceVsQualityData = (() => {
-    const points = instructorStats?.learning_curve || [];
+  const buildDenseSequenceSeries = (points: any[], teamIds: string[], keyPrefix: string): any[] => {
     const grouped: Record<number, any> = {};
-    points.forEach(p => {
-      if (!grouped[p.batch_order]) grouped[p.batch_order] = { seq: p.batch_order };
-      grouped[p.batch_order][String(p.team_id)] = p.avg_score;
+    points.forEach((p: any) => {
+      const seq = Number(p.batch_order);
+      if (!Number.isFinite(seq)) return;
+      if (!grouped[seq]) grouped[seq] = { seq };
+      grouped[seq][`${keyPrefix}${String(p.team_id)}`] = Number(p.avg_score ?? 0);
     });
-    return Object.values(grouped).sort((a: any, b: any) => a.seq - b.seq);
+    const rows = Object.values(grouped).sort((a: any, b: any) => a.seq - b.seq);
+    // Forward fill, but do NOT invent values for teams that never appear in the stats.
+    // This prevents phantom points/lines (e.g. Round 2 not started yet).
+    const last: Record<string, number | null> = {};
+    teamIds.forEach(tid => { last[`${keyPrefix}${tid}`] = null; });
+    return rows.map((row: any) => {
+      const out: any = { ...row };
+      teamIds.forEach(tid => {
+        const k = `${keyPrefix}${tid}`;
+        if (out[k] == null) {
+          out[k] = last[k];
+        } else {
+          last[k] = out[k];
+        }
+      });
+      return out;
+    });
+  };
+
+  const sequenceVsQualityData = (() => {
+    const ids = visibleTeamIds;
+    const p1 = statsR1?.learning_curve ?? [];
+    const p2 = statsR2?.learning_curve ?? [];
+    if (sequenceTab === 'BOTH') {
+      const s1 = buildDenseSequenceSeries(p1, ids, 'r1-');
+      const s2 = buildDenseSequenceSeries(p2, ids, 'r2-');
+      // merge by seq
+      const m = new Map<number, any>();
+      for (const row of s1) m.set(Number(row.seq), { ...(m.get(Number(row.seq)) ?? {}), ...row });
+      for (const row of s2) m.set(Number(row.seq), { ...(m.get(Number(row.seq)) ?? {}), ...row });
+      const merged = Array.from(m.values()).sort((a, b) => Number(a.seq) - Number(b.seq));
+      return merged.length ? merged : [{ seq: 0 }];
+    }
+    if (sequenceTab === 'R1') {
+      const s = buildDenseSequenceSeries(p1, ids, '');
+      return s.length ? s : [{ seq: 0 }];
+    }
+    if (sequenceTab === 'R2') {
+      const s = buildDenseSequenceSeries(p2, ids, '');
+      return s.length ? s : [{ seq: 0 }];
+    }
+    const s = buildDenseSequenceSeries((instructorStats?.learning_curve ?? []), ids, '');
+    return s.length ? s : [{ seq: 0 }];
   })();
 
   const rosterByTeam: Record<string, typeof roster> = {};
@@ -488,16 +599,182 @@ const Instructor: React.FC = () => {
   };
 
   // Render Charts Helper
-  const renderChart = (type: string) => {
+  const renderChart = (type: string, opts?: { isExpanded?: boolean }) => {
+    const isExpandedView = Boolean(opts?.isExpanded);
     switch(type) {
-        case 'sales':
+        case 'sales': {
+            const isExpanded = isExpandedView;
+            const eventsR1 = statsR1?.cumulative_sales ?? [];
+            const eventsR2 = statsR2?.cumulative_sales ?? [];
+            const teamsWithSalesR1 = new Set<string>(eventsR1.map((e: any) => String(e.team_id)));
+            const teamsWithSalesR2 = new Set<string>(eventsR2.map((e: any) => String(e.team_id)));
+            // If backend doesn't provide cumulative series, allow the local fallback ONLY for the current round.
+            if (teamsWithSalesR1.size === 0 && config.round === 1 && localSalesOverTime.length > 0) {
+              localSalesOverTime.forEach(ev => teamsWithSalesR1.add(String(ev.team_id)));
+            }
+            if (teamsWithSalesR2.size === 0 && config.round === 2 && localSalesOverTime.length > 0) {
+              localSalesOverTime.forEach(ev => teamsWithSalesR2.add(String(ev.team_id)));
+            }
+            const seriesDisplayName = (rawKey: string) => {
+              const isR1 = rawKey.startsWith('r1-');
+              const isR2 = rawKey.startsWith('r2-');
+              const teamId = isR1 || isR2 ? rawKey.slice(3) : rawKey;
+              const baseRaw = String(teamNames[teamId] ?? `Team ${teamId}`);
+              const base = baseRaw.length > 18 ? `${baseRaw.slice(0, 16)}…` : baseRaw;
+              if (!isExpanded) return base;
+              // When BOTH rounds are shown, we label only R2 lines by default (less crowded),
+              // so suffix is only needed for R1 lines when we choose to render them.
+              if (salesTab === 'BOTH') return base;
+              return base;
+            };
+            const colorForTeamId = (tid: string) => {
+              const idx = visibleTeamIds.indexOf(String(tid));
+              return PALETTE[(idx >= 0 ? idx : 0) % PALETTE.length];
+            };
+            const labelSeriesKeys = (() => {
+              if (!isExpanded) return [] as string[];
+              if (salesTab !== 'BOTH') return visibleTeamIds.map(tid => String(tid));
+              // Smart: if lots of teams, label only R2 to keep it readable.
+              return visibleTeamIds.length > 8
+                ? visibleTeamIds.map(tid => `r2-${tid}`)
+                : visibleTeamIds.flatMap(tid => [`r1-${tid}`, `r2-${tid}`]);
+            })();
+            const lastIndexBySeriesKey: Record<string, number> = {};
+            if (isExpanded) {
+              for (const k of labelSeriesKeys) {
+                for (let i = cumulativeSalesData.length - 1; i >= 0; i--) {
+                  const row: any = (cumulativeSalesData as any[])[i];
+                  const yv = Number(row?.[k]);
+                  if (Number.isFinite(yv)) {
+                    lastIndexBySeriesKey[k] = i;
+                    break;
+                  }
+                }
+              }
+            }
+            // If multiple series end at the same y-value, offset their labels so they don't overlap.
+            const labelYOffsetBySeriesKey: Record<string, number> = {};
+            if (isExpanded) {
+              const groups = new Map<string, string[]>();
+              for (const k of labelSeriesKeys) {
+                const idx = lastIndexBySeriesKey[k];
+                if (idx == null) continue;
+                const row: any = (cumulativeSalesData as any[])[idx];
+                const yv = Number(row?.[k]);
+                if (!Number.isFinite(yv)) continue;
+                // group with tolerance by rounding (sales are integers anyway)
+                const gk = String(Math.round(yv * 100) / 100);
+                const arr = groups.get(gk) ?? [];
+                arr.push(k);
+                groups.set(gk, arr);
+              }
+              for (const arr of groups.values()) {
+                if (arr.length <= 1) continue;
+                const reachIndex = (seriesKey: string) => {
+                  const lastIdx = lastIndexBySeriesKey[seriesKey];
+                  if (lastIdx == null) return Number.POSITIVE_INFINITY;
+                  const lastRow: any = (cumulativeSalesData as any[])[lastIdx];
+                  const finalY = Number(lastRow?.[seriesKey]);
+                  if (!Number.isFinite(finalY)) return Number.POSITIVE_INFINITY;
+                  for (let i = 0; i <= lastIdx; i++) {
+                    const row: any = (cumulativeSalesData as any[])[i];
+                    const yv = Number(row?.[seriesKey]);
+                    if (Number.isFinite(yv) && yv === finalY) return i;
+                  }
+                  return lastIdx;
+                };
+                // Earlier achiever gets a more negative offset (label above), matching desired "on top" ordering.
+                arr.sort((a, b) => {
+                  const ra = reachIndex(a);
+                  const rb = reachIndex(b);
+                  if (ra !== rb) return ra - rb;
+                  return a.localeCompare(b);
+                });
+                const step = 14;
+                const mid = (arr.length - 1) / 2;
+                arr.forEach((k, i) => {
+                  labelYOffsetBySeriesKey[k] = (i - mid) * step;
+                });
+              }
+            }
+            const makeEndLabel = (seriesKey: string, labelText: string, color: string) => (p: any) => {
+              if (!isExpanded) return null;
+              if (p?.index !== lastIndexBySeriesKey[seriesKey]) return null;
+              const x = Number(p?.x);
+              const y = Number(p?.y);
+              if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+              const isR1 = seriesKey.startsWith('r1-');
+              const labelOpacity = salesTab === 'BOTH' && isR1 ? 0.45 : 1;
+              const dyOffset = labelYOffsetBySeriesKey[seriesKey] ?? 0;
+              return (
+                <text
+                  x={x - 6}
+                  y={y + dyOffset}
+                  dy={4}
+                  textAnchor="end"
+                  fontSize={12}
+                  fontWeight={800}
+                  fill="#111827"
+                  opacity={labelOpacity}
+                  paintOrder="stroke"
+                  stroke="#ffffff"
+                  strokeWidth={5}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  pointerEvents="none"
+                >
+                  <tspan fill={color}>● </tspan>
+                  <tspan fill="#111827">{labelText}</tspan>
+                </text>
+              );
+            };
+            const shouldShowEndLabel = (seriesKey: string) => labelSeriesKeys.includes(seriesKey);
+
+            // Render order: low final value first (bottom), high final value last (top).
+            // If tied, the one that reached the final value LATER is rendered first, so the "earlier achiever" is on top.
+            const computeSeriesPriority = (seriesKey: string) => {
+              let lastIdx = -1;
+              let finalY = -Infinity;
+              for (let i = cumulativeSalesData.length - 1; i >= 0; i--) {
+                const row: any = (cumulativeSalesData as any[])[i];
+                const yv = Number(row?.[seriesKey]);
+                if (Number.isFinite(yv)) {
+                  finalY = yv;
+                  lastIdx = i;
+                  break;
+                }
+              }
+              let reachIdx = lastIdx;
+              if (Number.isFinite(finalY) && lastIdx >= 0) {
+                for (let i = 0; i <= lastIdx; i++) {
+                  const row: any = (cumulativeSalesData as any[])[i];
+                  const yv = Number(row?.[seriesKey]);
+                  if (Number.isFinite(yv) && yv === finalY) {
+                    reachIdx = i;
+                    break;
+                  }
+                }
+              }
+              return { finalY, reachIdx };
+            };
+            const sortSeriesKeysForRender = (keys: string[]) => {
+              const enriched = keys.map(k => ({ k, ...computeSeriesPriority(k) }));
+              enriched.sort((a, b) => {
+                if (a.finalY !== b.finalY) return a.finalY - b.finalY; // low first
+                if (a.reachIdx !== b.reachIdx) return b.reachIdx - a.reachIdx; // later reach first, earlier reach last (on top)
+                return a.k.localeCompare(b.k);
+              });
+              return enriched.map(x => x.k);
+            };
+
             return (
                <ResponsiveContainer width="100%" height="100%">
-                 <LineChart data={cumulativeSalesData} margin={{ top: 12, bottom: 20, left: 48, right: 16 }}>
+                 <LineChart data={cumulativeSalesData} margin={{ top: 12, bottom: 20, left: 48, right: isExpanded ? 24 : 16 }}>
                    <CartesianGrid strokeDasharray="3 3" />
                    <XAxis dataKey="index" label={{ value: 'Event Sequence', position: 'insideBottom', offset: -10 }} />
                    <YAxis
                      width={44}
+                      allowDecimals={false}
                      domain={[
                        0,
                        (dataMax: number) => {
@@ -508,27 +785,169 @@ const Instructor: React.FC = () => {
                      padding={{ top: 10, bottom: 4 }}
                      label={{ value: 'Cum. Sales', angle: -90, position: 'insideLeft', dx: -10 }}
                    />
-                   <Tooltip />
-                   {visibleTeamIds.map((teamId, index) => (
+                    <Tooltip
+                      shared={false}
+                      content={(props: any) => {
+                        const active = Boolean(props?.active);
+                        const payload = Array.isArray(props?.payload) ? props.payload : [];
+                        if (!active || payload.length === 0) return null;
+                        const hoveredKey = hoveredSalesSeriesKey;
+                        const p =
+                          (hoveredKey
+                            ? payload.find((it: any) => String(it?.dataKey ?? '') === hoveredKey)
+                            : undefined) ??
+                          payload[0] ??
+                          {};
+                        const rawKey = String(p.dataKey ?? '');
+                        const isR1 = rawKey.startsWith('r1-');
+                        const isR2 = rawKey.startsWith('r2-');
+                        const teamId = isR1 || isR2 ? rawKey.slice(3) : rawKey;
+                        const roundLabel = isR1 ? 'Round 1' : isR2 ? 'Round 2' : '';
+                        const teamName = String(teamNames[teamId] ?? `Team ${teamId}`);
+                        const sales = Number(p.value ?? 0);
+                        const avg =
+                          isR1
+                            ? avgQualityR1ByTeamId[teamId]
+                            : isR2
+                              ? avgQualityR2ByTeamId[teamId]
+                              : salesTab === 'R1'
+                                ? avgQualityR1ByTeamId[teamId]
+                                : salesTab === 'R2'
+                                  ? avgQualityR2ByTeamId[teamId]
+                                  : avgQualityByTeamId[teamId];
+                        const label = Number(props?.label);
+                        return (
+                          <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-lg">
+                            <div className="text-xs font-bold text-gray-500">Event {Number.isFinite(label) ? label : ''}</div>
+                            <div className="text-sm font-bold text-gray-900">{teamName}</div>
+                            {roundLabel && <div className="text-xs font-bold text-gray-500">{roundLabel}</div>}
+                            <div className="mt-1 text-sm text-gray-700">
+                              <div className="flex justify-between gap-4">
+                                <span className="font-medium">Sales</span>
+                                <span className="font-mono font-bold text-emerald-700">{Number.isFinite(sales) ? sales : 0}</span>
+                              </div>
+                              <div className="flex justify-between gap-4">
+                                <span className="font-medium">Avg Quality</span>
+                                <span className="font-mono font-bold text-indigo-700">
+                                  {Number.isFinite(avg) ? avg.toFixed(1) : '—'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }}
+                    />
+                    {salesTab === 'BOTH' ? (
+                      <>
+                        {sortSeriesKeysForRender(
+                          visibleTeamIds.filter(tid => teamsWithSalesR1.has(String(tid))).map(tid => `r1-${tid}`)
+                        ).map((seriesKey) => {
+                          const teamId = seriesKey.slice(3);
+                          const color = colorForTeamId(teamId);
+                          return (
+                          <Line
+                            key={seriesKey}
+                            type="monotone"
+                            dataKey={seriesKey}
+                            name={`${teamNames[teamId] || `Team ${teamId}`} (R1)`}
+                            stroke={color}
+                            strokeWidth={2}
+                            strokeOpacity={0.25}
+                            strokeDasharray="6 4"
+                            dot={false}
+                            isAnimationActive={!isExpanded}
+                            activeDot={hoveredSalesSeriesKey === seriesKey ? { r: 4 } : false}
+                            label={
+                              isExpanded && shouldShowEndLabel(seriesKey)
+                                ? makeEndLabel(seriesKey, seriesDisplayName(seriesKey), color)
+                                : false
+                            }
+                            onMouseEnter={() => setHoveredSalesSeriesKey(seriesKey)}
+                            onMouseLeave={() => setHoveredSalesSeriesKey(null)}
+                          />
+                          );
+                        })}
+                        {sortSeriesKeysForRender(
+                          visibleTeamIds.filter(tid => teamsWithSalesR2.has(String(tid))).map(tid => `r2-${tid}`)
+                        ).map((seriesKey) => {
+                          const teamId = seriesKey.slice(3);
+                          const color = colorForTeamId(teamId);
+                          return (
+                          <Line
+                            key={seriesKey}
+                            type="monotone"
+                            dataKey={seriesKey}
+                            name={`${teamNames[teamId] || `Team ${teamId}`} (R2)`}
+                            stroke={color}
+                            strokeWidth={3}
+                            strokeOpacity={1}
+                            dot={false}
+                            isAnimationActive={!isExpanded}
+                            activeDot={hoveredSalesSeriesKey === seriesKey ? { r: 4 } : false}
+                            label={
+                              isExpanded && shouldShowEndLabel(seriesKey)
+                                ? makeEndLabel(seriesKey, seriesDisplayName(seriesKey), color)
+                                : false
+                            }
+                            onMouseEnter={() => setHoveredSalesSeriesKey(seriesKey)}
+                            onMouseLeave={() => setHoveredSalesSeriesKey(null)}
+                          />
+                          );
+                        })}
+                      </>
+                    ) : (
+                      <>
+                   {sortSeriesKeysForRender(
+                      (salesTab === 'R1'
+                        ? visibleTeamIds.filter(tid => teamsWithSalesR1.has(String(tid)))
+                        : salesTab === 'R2'
+                          ? visibleTeamIds.filter(tid => teamsWithSalesR2.has(String(tid)))
+                          : visibleTeamIds
+                      ).map(tid => String(tid))
+                    ).map((teamId) => {
+                      const color = colorForTeamId(teamId);
+                      return (
                       <Line 
                         key={teamId} 
                         type="monotone" 
                         dataKey={teamId} 
                         name={teamNames[teamId] || `Team ${teamId}`} 
-                        stroke={PALETTE[index % PALETTE.length]} 
+                        stroke={color} 
                         strokeWidth={2}
                         dot={false}
+                        isAnimationActive={!isExpanded}
+                        activeDot={hoveredSalesSeriesKey === String(teamId) ? { r: 4 } : false}
+                        label={
+                          isExpanded && shouldShowEndLabel(String(teamId))
+                            ? makeEndLabel(String(teamId), seriesDisplayName(String(teamId)), color)
+                            : false
+                        }
+                        onMouseEnter={() => setHoveredSalesSeriesKey(String(teamId))}
+                        onMouseLeave={() => setHoveredSalesSeriesKey(null)}
                       />
-                   ))}
+                      );
+                    })}
+                      </>
+                    )}
                  </LineChart>
                </ResponsiveContainer>
             );
+        }
         case 'size_quality':
             return (
                <ResponsiveContainer width="100%" height="100%">
                  <ScatterChart margin={{ bottom: 20, left: 48, right: 16 }}>
                    <CartesianGrid strokeDasharray="3 3" />
-                   <XAxis type="number" dataKey="size" name="Batch Size" unit=" jokes" />
+                   <XAxis
+                     type="number"
+                     dataKey="size"
+                     name="Jokes Count"
+                     domain={[0, 10]}
+                     allowDecimals={false}
+                     ticks={[0, 2, 4, 6, 8, 10]}
+                     interval={0}
+                     label={{ value: 'Jokes Count', position: 'insideBottom', offset: -10 }}
+                   />
                    <YAxis
                      width={44}
                      type="number"
@@ -543,10 +962,162 @@ const Instructor: React.FC = () => {
                  </ScatterChart>
                </ResponsiveContainer>
             );
-        case 'sequence_quality':
+        case 'sequence_quality': {
+            const isExpanded = isExpandedView;
+            const pointsR1 = statsR1?.learning_curve ?? [];
+            const pointsR2 = statsR2?.learning_curve ?? [];
+            const teamsWithSeqR1 = new Set<string>(pointsR1.map((p: any) => String(p.team_id)));
+            const teamsWithSeqR2 = new Set<string>(pointsR2.map((p: any) => String(p.team_id)));
+            const seriesDisplayName = (rawKey: string) => {
+              const isR1 = rawKey.startsWith('r1-');
+              const isR2 = rawKey.startsWith('r2-');
+              const teamId = isR1 || isR2 ? rawKey.slice(3) : rawKey;
+              const baseRaw = String(teamNames[teamId] ?? `Team ${teamId}`);
+              const base = baseRaw.length > 18 ? `${baseRaw.slice(0, 16)}…` : baseRaw;
+              if (!isExpanded) return base;
+              if (sequenceTab === 'BOTH') return base;
+              return base;
+            };
+            const colorForTeamId = (tid: string) => {
+              const idx = visibleTeamIds.indexOf(String(tid));
+              return PALETTE[(idx >= 0 ? idx : 0) % PALETTE.length];
+            };
+            const labelSeriesKeys = (() => {
+              if (!isExpanded) return [] as string[];
+              if (sequenceTab !== 'BOTH') return visibleTeamIds.map(tid => String(tid));
+              // Smart: if lots of teams, label only R2 to keep it readable.
+              return visibleTeamIds.length > 8
+                ? visibleTeamIds.map(tid => `r2-${tid}`)
+                : visibleTeamIds.flatMap(tid => [`r1-${tid}`, `r2-${tid}`]);
+            })();
+            const lastIndexBySeriesKey: Record<string, number> = {};
+            if (isExpanded) {
+              for (const k of labelSeriesKeys) {
+                for (let i = sequenceVsQualityData.length - 1; i >= 0; i--) {
+                  const row: any = (sequenceVsQualityData as any[])[i];
+                  const yv = Number(row?.[k]);
+                  if (Number.isFinite(yv)) {
+                    lastIndexBySeriesKey[k] = i;
+                    break;
+                  }
+                }
+              }
+            }
+            // If multiple series end at the same y-value, offset their labels so they don't overlap.
+            const labelYOffsetBySeriesKey: Record<string, number> = {};
+            if (isExpanded) {
+              const groups = new Map<string, string[]>();
+              for (const k of labelSeriesKeys) {
+                const idx = lastIndexBySeriesKey[k];
+                if (idx == null) continue;
+                const row: any = (sequenceVsQualityData as any[])[idx];
+                const yv = Number(row?.[k]);
+                if (!Number.isFinite(yv)) continue;
+                // group with tolerance by rounding to 2 decimals
+                const gk = String(Math.round(yv * 100) / 100);
+                const arr = groups.get(gk) ?? [];
+                arr.push(k);
+                groups.set(gk, arr);
+              }
+              for (const arr of groups.values()) {
+                if (arr.length <= 1) continue;
+                const reachIndex = (seriesKey: string) => {
+                  const lastIdx = lastIndexBySeriesKey[seriesKey];
+                  if (lastIdx == null) return Number.POSITIVE_INFINITY;
+                  const lastRow: any = (sequenceVsQualityData as any[])[lastIdx];
+                  const finalY = Number(lastRow?.[seriesKey]);
+                  if (!Number.isFinite(finalY)) return Number.POSITIVE_INFINITY;
+                  for (let i = 0; i <= lastIdx; i++) {
+                    const row: any = (sequenceVsQualityData as any[])[i];
+                    const yv = Number(row?.[seriesKey]);
+                    if (Number.isFinite(yv) && yv === finalY) return i;
+                  }
+                  return lastIdx;
+                };
+                arr.sort((a, b) => {
+                  const ra = reachIndex(a);
+                  const rb = reachIndex(b);
+                  if (ra !== rb) return ra - rb;
+                  return a.localeCompare(b);
+                });
+                const step = 14;
+                const mid = (arr.length - 1) / 2;
+                arr.forEach((k, i) => {
+                  labelYOffsetBySeriesKey[k] = (i - mid) * step;
+                });
+              }
+            }
+            const makeEndLabel = (seriesKey: string, labelText: string, color: string) => (p: any) => {
+              if (!isExpanded) return null;
+              if (p?.index !== lastIndexBySeriesKey[seriesKey]) return null;
+              const x = Number(p?.x);
+              const y = Number(p?.y);
+              if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+              const isR1 = seriesKey.startsWith('r1-');
+              const labelOpacity = sequenceTab === 'BOTH' && isR1 ? 0.45 : 1;
+              const dyOffset = labelYOffsetBySeriesKey[seriesKey] ?? 0;
+              return (
+                <text
+                  x={x - 6}
+                  y={y + dyOffset}
+                  dy={4}
+                  textAnchor="end"
+                  fontSize={12}
+                  fontWeight={800}
+                  fill="#111827"
+                  opacity={labelOpacity}
+                  paintOrder="stroke"
+                  stroke="#ffffff"
+                  strokeWidth={5}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  pointerEvents="none"
+                >
+                  <tspan fill={color}>● </tspan>
+                  <tspan fill="#111827">{labelText}</tspan>
+                </text>
+              );
+            };
+            const shouldShowEndLabel = (seriesKey: string) => labelSeriesKeys.includes(seriesKey);
+
+            const computeSeriesPriority = (seriesKey: string) => {
+              let lastIdx = -1;
+              let finalY = -Infinity;
+              for (let i = sequenceVsQualityData.length - 1; i >= 0; i--) {
+                const row: any = (sequenceVsQualityData as any[])[i];
+                const yv = Number(row?.[seriesKey]);
+                if (Number.isFinite(yv)) {
+                  finalY = yv;
+                  lastIdx = i;
+                  break;
+                }
+              }
+              let reachIdx = lastIdx;
+              if (Number.isFinite(finalY) && lastIdx >= 0) {
+                for (let i = 0; i <= lastIdx; i++) {
+                  const row: any = (sequenceVsQualityData as any[])[i];
+                  const yv = Number(row?.[seriesKey]);
+                  if (Number.isFinite(yv) && yv === finalY) {
+                    reachIdx = i;
+                    break;
+                  }
+                }
+              }
+              return { finalY, reachIdx };
+            };
+            const sortSeriesKeysForRender = (keys: string[]) => {
+              const enriched = keys.map(k => ({ k, ...computeSeriesPriority(k) }));
+              enriched.sort((a, b) => {
+                if (a.finalY !== b.finalY) return a.finalY - b.finalY;
+                if (a.reachIdx !== b.reachIdx) return b.reachIdx - a.reachIdx;
+                return a.k.localeCompare(b.k);
+              });
+              return enriched.map(x => x.k);
+            };
+
             return (
                <ResponsiveContainer width="100%" height="100%">
-                 <LineChart data={sequenceVsQualityData} margin={{ top: 12, bottom: 20, left: 48, right: 16 }}>
+                 <LineChart data={sequenceVsQualityData} margin={{ top: 12, bottom: 20, left: 48, right: isExpanded ? 24 : 16 }}>
                    <CartesianGrid strokeDasharray="3 3" />
                    <XAxis dataKey="seq" label={{ value: 'Batch Sequence', position: 'insideBottom', offset: -10 }} />
                    <YAxis
@@ -556,21 +1127,148 @@ const Instructor: React.FC = () => {
                      padding={{ top: 12, bottom: 6 }}
                      label={{ value: 'Avg Quality', angle: -90, position: 'insideLeft', dx: -10 }}
                    />
-                   <Tooltip />
-                   {visibleTeamIds.map((teamId, index) => (
+                   <Tooltip
+                     shared={false}
+                     content={(props: any) => {
+                       const active = Boolean(props?.active);
+                       const payload = Array.isArray(props?.payload) ? props.payload : [];
+                       if (!active || payload.length === 0) return null;
+
+                       const hoveredKey = hoveredSequenceSeriesKey;
+                       const p =
+                         (hoveredKey
+                           ? payload.find((it: any) => String(it?.dataKey ?? '') === hoveredKey)
+                           : undefined) ??
+                         payload[0] ??
+                         {};
+
+                       const rawKey = String(p.dataKey ?? '');
+                       const isR1 = rawKey.startsWith('r1-');
+                       const isR2 = rawKey.startsWith('r2-');
+                       const teamId = isR1 || isR2 ? rawKey.slice(3) : rawKey;
+                       const roundLabel = isR1 ? 'Round 1' : isR2 ? 'Round 2' : '';
+                       const teamName = String(teamNames[teamId] ?? `Team ${teamId}`);
+                       const quality = Number(p.value ?? NaN);
+                       const label = Number(props?.label);
+
+                       return (
+                         <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-lg">
+                           <div className="text-xs font-bold text-gray-500">
+                             Batch {Number.isFinite(label) ? label : ''}
+                           </div>
+                           <div className="text-sm font-bold text-gray-900">{teamName}</div>
+                           {roundLabel && <div className="text-xs font-bold text-gray-500">{roundLabel}</div>}
+                           <div className="mt-1 text-sm text-gray-700">
+                             <div className="flex justify-between gap-4">
+                               <span className="font-medium">Avg Quality</span>
+                               <span className="font-mono font-bold text-indigo-700">
+                                 {Number.isFinite(quality) ? quality.toFixed(1) : '—'}
+                               </span>
+                             </div>
+                           </div>
+                         </div>
+                       );
+                     }}
+                   />
+                   {sequenceTab === 'BOTH' ? (
+                     <>
+                       {sortSeriesKeysForRender(
+                         visibleTeamIds.filter(tid => teamsWithSeqR1.has(String(tid))).map(tid => `r1-${tid}`)
+                       ).map((seriesKey) => {
+                         const teamId = seriesKey.slice(3);
+                         const color = colorForTeamId(teamId);
+                         return (
+                         <Line
+                           key={seriesKey}
+                           type="monotone"
+                           dataKey={seriesKey}
+                           name={`${teamNames[teamId] || `Team ${teamId}`} (R1)`}
+                           stroke={color}
+                           strokeWidth={2}
+                           strokeOpacity={0.25}
+                           strokeDasharray="6 4"
+                           connectNulls
+                           dot={false}
+                           isAnimationActive={!isExpanded}
+                           activeDot={hoveredSequenceSeriesKey === seriesKey ? { r: 4 } : false}
+                           label={
+                             isExpanded && shouldShowEndLabel(seriesKey)
+                               ? makeEndLabel(seriesKey, seriesDisplayName(seriesKey), color)
+                               : false
+                           }
+                           onMouseEnter={() => setHoveredSequenceSeriesKey(seriesKey)}
+                           onMouseLeave={() => setHoveredSequenceSeriesKey(null)}
+                         />
+                         );
+                       })}
+                       {sortSeriesKeysForRender(
+                         visibleTeamIds.filter(tid => teamsWithSeqR2.has(String(tid))).map(tid => `r2-${tid}`)
+                       ).map((seriesKey) => {
+                         const teamId = seriesKey.slice(3);
+                         const color = colorForTeamId(teamId);
+                         return (
+                         <Line
+                           key={seriesKey}
+                           type="monotone"
+                           dataKey={seriesKey}
+                           name={`${teamNames[teamId] || `Team ${teamId}`} (R2)`}
+                           stroke={color}
+                           strokeWidth={3}
+                           strokeOpacity={1}
+                           connectNulls
+                           dot={false}
+                           isAnimationActive={!isExpanded}
+                           activeDot={hoveredSequenceSeriesKey === seriesKey ? { r: 4 } : false}
+                           label={
+                             isExpanded && shouldShowEndLabel(seriesKey)
+                               ? makeEndLabel(seriesKey, seriesDisplayName(seriesKey), color)
+                               : false
+                           }
+                           onMouseEnter={() => setHoveredSequenceSeriesKey(seriesKey)}
+                           onMouseLeave={() => setHoveredSequenceSeriesKey(null)}
+                         />
+                         );
+                       })}
+                     </>
+                   ) : (
+                     <>
+                   {sortSeriesKeysForRender(
+                      (sequenceTab === 'R1'
+                        ? visibleTeamIds.filter(tid => teamsWithSeqR1.has(String(tid)))
+                        : sequenceTab === 'R2'
+                          ? visibleTeamIds.filter(tid => teamsWithSeqR2.has(String(tid)))
+                          : visibleTeamIds
+                      ).map(tid => String(tid))
+                    ).map((teamId) => {
+                      const color = colorForTeamId(teamId);
+                      return (
                       <Line 
                         key={teamId} 
                         type="monotone" 
                         dataKey={teamId} 
                         name={teamNames[teamId] || `Team ${teamId}`} 
-                        stroke={PALETTE[index % PALETTE.length]} 
+                        stroke={color} 
                         strokeWidth={2}
                         connectNulls
+                        dot={false}
+                        isAnimationActive={!isExpanded}
+                        activeDot={hoveredSequenceSeriesKey === String(teamId) ? { r: 4 } : false}
+                        label={
+                          isExpanded && shouldShowEndLabel(String(teamId))
+                            ? makeEndLabel(String(teamId), seriesDisplayName(String(teamId)), color)
+                            : false
+                        }
+                        onMouseEnter={() => setHoveredSequenceSeriesKey(String(teamId))}
+                        onMouseLeave={() => setHoveredSequenceSeriesKey(null)}
                       />
-                   ))}
+                      );
+                    })}
+                     </>
+                   )}
                  </LineChart>
                </ResponsiveContainer>
             );
+        }
         default: return null;
     }
   };
@@ -610,26 +1308,74 @@ const Instructor: React.FC = () => {
         <Modal 
             isOpen={!!expandedChart} 
             onClose={() => setExpandedChart(null)} 
-            title={expandedChart === 'leaderboard' ? 'Leaderboard' : 'Expanded Chart View'}
+            title={
+              expandedChart === 'leaderboard'
+                ? 'Leaderboard'
+                : expandedChart === 'sales'
+                  ? 'Cumulative Sales Over Time'
+                  : expandedChart === 'sequence_quality'
+                    ? 'Batch Sequence vs Quality'
+                    : expandedChart === 'size_quality'
+                      ? 'Batch Size vs Quality'
+                      : 'Expanded'
+            }
             maxWidth="max-w-[90vw]"
         >
             {expandedChart === 'leaderboard' ? (
               <div className="h-[75vh] w-full flex flex-col">
                 <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center rounded-md border border-gray-200 bg-white p-0.5">
+                      {[1, 2].map(r => (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => {
+                            leaderboardRoundTouchedRef.current = true;
+                            setLeaderboardRoundTab(r as 1 | 2);
+                          }}
+                          className={`px-3 py-1.5 rounded text-sm font-bold ${
+                            leaderboardRoundTab === r ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'
+                          }`}
+                          title={r === 1 ? 'Round 1 leaderboard' : 'Round 2 leaderboard'}
+                        >
+                          {r === 1 ? 'Round 1' : 'Round 2'}
+                        </button>
+                      ))}
+                    </div>
                   <div className="flex items-center space-x-2 bg-slate-100 px-4 py-2 rounded-lg text-slate-700 font-mono text-xl">
                     <Clock size={20} />
                     <span>{formatTime(config.elapsedTime)}</span>
-                  </div>
-                  <div className="text-sm text-gray-500">
-                    Sorted by <span className="font-semibold text-gray-700">{leaderboardSortKey}</span> ({leaderboardSortDir})
                   </div>
                 </div>
                 {renderLeaderboardTable({ maxHeightClass: 'max-h-[65vh]', isExpanded: true })}
               </div>
             ) : (
-              <div className="h-[75vh] w-full">
-                {expandedChart && renderChart(expandedChart)}
+            <div className="h-[75vh] w-full flex flex-col">
+              {(expandedChart === 'sales' || expandedChart === 'sequence_quality') && (
+                <div className="mb-3 flex justify-end pr-6">
+                  <div className="flex items-center rounded-md border border-gray-200 bg-white p-0.5">
+                    {(['R1', 'R2', 'BOTH'] as const).map(k => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => (expandedChart === 'sales' ? setSalesTab(k) : setSequenceTab(k))}
+                        className={`px-3 py-1.5 rounded text-sm font-bold ${
+                          (expandedChart === 'sales' ? salesTab : sequenceTab) === k
+                            ? 'bg-gray-900 text-white'
+                            : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                        title={k === 'BOTH' ? 'Compare both rounds' : (k === 'R1' ? 'Round 1' : 'Round 2')}
+                      >
+                        {k === 'R1' ? 'Round 1' : k === 'R2' ? 'Round 2' : 'Both'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="flex-1">
+                {expandedChart && renderChart(expandedChart, { isExpanded: true })}
               </div>
+            </div>
             )}
         </Modal>
 
@@ -709,13 +1455,13 @@ const Instructor: React.FC = () => {
 
               <div className="flex items-center space-x-2">
                  {!config.isActive ? (
-                   <Button
+                 <Button 
                      onClick={() => setGameActive(true)}
                      variant="success"
-                     className="w-32 flex justify-center items-center gap-2"
-                   >
+                   className="w-32 flex justify-center items-center gap-2"
+                 >
                      <Play size={16} /> Start
-                   </Button>
+                 </Button>
                  ) : (
                    <Button
                      disabled
@@ -821,150 +1567,170 @@ const Instructor: React.FC = () => {
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
           {/* Team Management (full width) */}
           <Card className="xl:col-span-2" title="Team Management (Drag to Move, Click to Switch Role)">
-            <div className="overflow-x-auto max-h-80 overflow-y-auto">
-              <table className="min-w-full text-sm">
-                <thead className="sticky top-0 bg-white shadow-sm z-10">
-                  <tr className="bg-gray-50 border-b">
-                    <th className="px-4 py-2 text-left font-medium text-gray-500">Team Name</th>
-                    <th className="px-4 py-2 text-left font-medium text-gray-500">Members</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {visibleTeamIds.map(teamId => (
-                    <tr 
-                      key={teamId} 
-                      onDragOver={handleDragOver}
-                      onDrop={(e) => handleDrop(e, 'TEAM', teamId)}
-                      className="hover:bg-blue-50/50 transition-colors"
-                    >
-                      <td className="px-4 py-3 align-top w-1/4">
-                        <input 
-                          type="text" 
-                          value={teamNames[teamId]}
-                          onChange={(e) => updateTeamName(teamId, e.target.value)}
-                          className="font-bold text-gray-800 bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 outline-none w-full"
-                        />
-                        <span className="text-xs text-gray-400 block mt-1">ID: {teamId}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          {rosterByTeam[teamId]?.map(u => (
-                            <div 
-                              key={u.id} 
-                              draggable
-                              onDragStart={(e) => handleDragStart(e, u.id)}
-                              onClick={() => toggleUserRole(u.id, u.role)}
-                              title="Drag to move, Click to toggle Role"
-                              className={`cursor-pointer inline-flex items-center px-2 py-1 rounded text-xs border hover:shadow-md transition-all active:scale-95 select-none ${u.role === Role.JOKE_MAKER ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-purple-50 text-purple-700 border-purple-100'}`}
-                            >
-                              <GripVertical size={10} className="mr-1 opacity-50" />
-                              <span className="font-bold">{u.name}</span>
-                              <span className="ml-1 opacity-70">({u.role === Role.JOKE_MAKER ? 'JM' : 'QC'})</span>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  handleDeleteUser(u.id, u.name);
-                                }}
-                                onMouseDown={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                }}
-                                disabled={deletingUserIds.includes(u.id)}
-                                className="ml-2 p-1 rounded hover:bg-white/60 text-gray-500 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                                title="Delete user"
-                              >
-                                <Trash2 size={14} />
-                              </button>
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                {/* Two columns of production teams (JM/QC) */}
+                  {[0, 1].map((colIdx) => {
+                    const colTeamIds = visibleTeamIds.filter((_, idx) => idx % 2 === colIdx);
+                    return (
+                      <div key={colIdx} className="space-y-3">
+                        {colTeamIds.map((teamId) => (
+                          <div
+                            key={teamId}
+                            onDragOver={handleDragOver}
+                            onDrop={(e) => handleDrop(e, 'TEAM', teamId)}
+                            className="rounded-lg border border-gray-200 bg-white p-3 hover:bg-blue-50/30 transition-colors"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <input
+                                  type="text"
+                                  value={teamNames[teamId]}
+                                  onChange={(e) => updateTeamName(teamId, e.target.value)}
+                                  className="font-bold text-gray-800 bg-transparent border-b border-dashed border-gray-300 focus:border-blue-500 outline-none w-full"
+                                />
+                                <span className="text-xs text-gray-400 block mt-1">ID: {teamId}</span>
+                              </div>
+                              {/* JM/QC Team label removed for cleaner UI */}
                             </div>
-                          )) || <span className="text-gray-400 italic">No members. Drag users here.</span>}
-                        </div>
-                      </td>
-                    </tr>
+
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {(rosterByTeam[teamId]?.length ?? 0) > 0 ? (
+                                rosterByTeam[teamId]!.map((u) => (
+                                  <div
+                                    key={u.id}
+                                    draggable
+                                    onDragStart={(e) => handleDragStart(e, u.id)}
+                                    onClick={() => toggleUserRole(u.id, u.role)}
+                                    title="Drag to move, Click to toggle Role"
+                                    className={`cursor-pointer inline-flex items-center px-2 py-1 rounded text-xs border hover:shadow-md transition-all active:scale-95 select-none ${
+                                      u.role === Role.JOKE_MAKER
+                                        ? 'bg-blue-50 text-blue-700 border-blue-100'
+                                        : 'bg-purple-50 text-purple-700 border-purple-100'
+                                    }`}
+                                  >
+                                    <GripVertical size={10} className="mr-1 opacity-50" />
+                                    <span className="font-bold">{u.name}</span>
+                                    <span className="ml-1 opacity-70">({u.role === Role.JOKE_MAKER ? 'JM' : 'QC'})</span>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        handleDeleteUser(u.id, u.name);
+                                      }}
+                                      onMouseDown={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                      }}
+                                      disabled={deletingUserIds.includes(u.id)}
+                                      className="ml-2 p-1 rounded hover:bg-white/60 text-gray-500 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                      title="Delete user"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                ))
+                              ) : (
+                                <span className="text-gray-400 text-xs italic">No members. Drag users here.</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+
+                {/* Customers column */}
+                <div
+                  className="rounded-lg border border-amber-200 bg-amber-50/40 p-3"
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => handleDrop(e, 'CUSTOMER')}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="font-bold text-amber-800">Customers</div>
+                    <div className="text-xs font-bold text-amber-700/70">{roster.filter(u => u.role === Role.CUSTOMER).length}</div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {roster.filter(u => u.role === Role.CUSTOMER).map(u => (
+                      <div
+                        key={u.id}
+                        draggable
+                        onDragStart={(e) => handleDragStart(e, u.id)}
+                        className="cursor-move inline-flex items-center px-2 py-1 rounded text-xs bg-amber-100 text-amber-800 border border-amber-200 hover:shadow-md"
+                      >
+                        <GripVertical size={10} className="mr-1 opacity-50" />
+                        {u.name}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleDeleteUser(u.id, u.name);
+                          }}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                          }}
+                          disabled={deletingUserIds.includes(u.id)}
+                          className="ml-2 p-1 rounded hover:bg-white/60 text-amber-700/70 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Delete user"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
+                    {roster.filter(u => u.role === Role.CUSTOMER).length === 0 && (
+                      <span className="text-gray-400 text-xs italic">Drag users here to make them Customers</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Lobby / Unassigned (full width) */}
+              <div
+                className="rounded-lg border border-gray-200 bg-gray-100/50 p-3"
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDrop(e, 'LOBBY')}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="font-bold text-gray-600">Unassigned (Lobby)</div>
+                  <div className="text-xs font-bold text-gray-500">{roster.filter(u => u.role === Role.UNASSIGNED).length}</div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {roster.filter(u => u.role === Role.UNASSIGNED).map(u => (
+                    <div
+                      key={u.id}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, u.id)}
+                      className="cursor-move inline-flex items-center px-2 py-1 rounded text-xs bg-gray-200 text-gray-800 border border-gray-300 hover:shadow-md"
+                    >
+                      <GripVertical size={10} className="mr-1 opacity-50" />
+                      {u.name}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleDeleteUser(u.id, u.name);
+                        }}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                        disabled={deletingUserIds.includes(u.id)}
+                        className="ml-2 p-1 rounded hover:bg-white/60 text-gray-600 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Delete user"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
                   ))}
-                  <tr 
-                    className="bg-amber-50/50"
-                    onDragOver={handleDragOver}
-                    onDrop={(e) => handleDrop(e, 'CUSTOMER')}
-                  >
-                    <td className="px-4 py-3 font-bold text-amber-800">Customers</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-2">
-                        {roster.filter(u => u.role === Role.CUSTOMER).map(u => (
-                           <div 
-                             key={u.id} 
-                             draggable
-                             onDragStart={(e) => handleDragStart(e, u.id)}
-                             className="cursor-move inline-flex items-center px-2 py-1 rounded text-xs bg-amber-100 text-amber-800 border border-amber-200 hover:shadow-md"
-                           >
-                             <GripVertical size={10} className="mr-1 opacity-50" />
-                             {u.name}
-                             <button
-                               type="button"
-                               onClick={(e) => {
-                                 e.preventDefault();
-                                 e.stopPropagation();
-                                 handleDeleteUser(u.id, u.name);
-                               }}
-                               onMouseDown={(e) => {
-                                 e.preventDefault();
-                                 e.stopPropagation();
-                               }}
-                               disabled={deletingUserIds.includes(u.id)}
-                               className="ml-2 p-1 rounded hover:bg-white/60 text-amber-700/70 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                               title="Delete user"
-                             >
-                               <Trash2 size={14} />
-                             </button>
-                           </div>
-                        ))}
-                        {roster.filter(u => u.role === Role.CUSTOMER).length === 0 && <span className="text-gray-400 text-xs italic">Drag users here to make them Customers</span>}
-                      </div>
-                    </td>
-                  </tr>
-                   <tr 
-                     className="bg-gray-100/50"
-                     onDragOver={handleDragOver}
-                     onDrop={(e) => handleDrop(e, 'LOBBY')}
-                   >
-                    <td className="px-4 py-3 font-bold text-gray-600">Unassigned (Lobby)</td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-2">
-                        {roster.filter(u => u.role === Role.UNASSIGNED).map(u => (
-                           <div 
-                             key={u.id} 
-                             draggable
-                             onDragStart={(e) => handleDragStart(e, u.id)}
-                             className="cursor-move inline-flex items-center px-2 py-1 rounded text-xs bg-gray-200 text-gray-800 border border-gray-300 hover:shadow-md"
-                           >
-                             <GripVertical size={10} className="mr-1 opacity-50" />
-                             {u.name}
-                             <button
-                               type="button"
-                               onClick={(e) => {
-                                 e.preventDefault();
-                                 e.stopPropagation();
-                                 handleDeleteUser(u.id, u.name);
-                               }}
-                               onMouseDown={(e) => {
-                                 e.preventDefault();
-                                 e.stopPropagation();
-                               }}
-                               disabled={deletingUserIds.includes(u.id)}
-                               className="ml-2 p-1 rounded hover:bg-white/60 text-gray-600 hover:text-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                               title="Delete user"
-                             >
-                               <Trash2 size={14} />
-                             </button>
-                           </div>
-                        ))}
-                        {roster.filter(u => u.role === Role.UNASSIGNED).length === 0 && <span className="text-gray-400 text-xs italic">All users assigned</span>}
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
+                  {roster.filter(u => u.role === Role.UNASSIGNED).length === 0 && (
+                    <span className="text-gray-400 text-xs italic">All users assigned</span>
+                  )}
+                </div>
+              </div>
             </div>
           </Card>
 
@@ -973,7 +1739,25 @@ const Instructor: React.FC = () => {
             className="xl:col-span-2"
             title="Leaderboard"
             action={
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-2">
+                <div className="flex items-center rounded-md border border-gray-200 bg-white p-0.5">
+                  {[1, 2].map(r => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => {
+                        leaderboardRoundTouchedRef.current = true;
+                        setLeaderboardRoundTab(r as 1 | 2);
+                      }}
+                      className={`px-2 py-1 rounded text-xs font-bold ${
+                        leaderboardRoundTab === r ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'
+                      }`}
+                      title={r === 1 ? 'Round 1 leaderboard' : 'Round 2 leaderboard'}
+                    >
+                      {r === 1 ? 'R1' : 'R2'}
+                    </button>
+                  ))}
+                </div>
                 <button
                   onClick={() => setExpandedChart('leaderboard')}
                   className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
@@ -992,7 +1776,22 @@ const Instructor: React.FC = () => {
             <Card
               title="Cumulative Sales Over Time"
               action={
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center rounded-md border border-gray-200 bg-white p-0.5">
+                    {(['R1', 'R2', 'BOTH'] as const).map(k => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setSalesTab(k)}
+                        className={`px-2 py-1 rounded text-xs font-bold ${
+                          salesTab === k ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                        title={k === 'BOTH' ? 'Compare both rounds' : (k === 'R1' ? 'Round 1' : 'Round 2')}
+                      >
+                        {k === 'R1' ? 'R1' : k === 'R2' ? 'R2' : 'Both'}
+                      </button>
+                    ))}
+                  </div>
                   <button
                     onClick={() => setExpandedChart('sales')}
                     className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
@@ -1021,7 +1820,22 @@ const Instructor: React.FC = () => {
             <Card
               title="Batch Sequence vs Quality"
               action={
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center rounded-md border border-gray-200 bg-white p-0.5">
+                    {(['R1', 'R2', 'BOTH'] as const).map(k => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setSequenceTab(k)}
+                        className={`px-2 py-1 rounded text-xs font-bold ${
+                          sequenceTab === k ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                        title={k === 'BOTH' ? 'Compare both rounds' : (k === 'R1' ? 'Round 1' : 'Round 2')}
+                      >
+                        {k === 'R1' ? 'R1' : k === 'R2' ? 'R2' : 'Both'}
+                      </button>
+                    ))}
+                  </div>
                   <button
                     onClick={() => setExpandedChart('sequence_quality')}
                     className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
