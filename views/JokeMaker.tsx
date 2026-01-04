@@ -9,8 +9,10 @@ const JokeMaker: React.FC = () => {
   
   const [currentJokes, setCurrentJokes] = useState<string[]>([]);
   const [jokeInput, setJokeInput] = useState('');
+  const [jokeAddError, setJokeAddError] = useState<string | null>(null);
   const [complianceChecked, setComplianceChecked] = useState(false);
   const [dismissedTeamPopup, setDismissedTeamPopup] = useState(false);
+  const [scratchpadText, setScratchpadText] = useState('');
   
   // Feedback Modal State
   const [feedbackBatch, setFeedbackBatch] = useState<Batch | null>(null);
@@ -31,10 +33,21 @@ const JokeMaker: React.FC = () => {
   const maxBatchSize = isRound1 ? round1BatchSizeForUi : config.round2BatchLimit;
   const isInputDisabled = currentJokes.length >= maxBatchSize || !config.isActive;
 
+  const normalizeJoke = (s: string) =>
+    s.trim().replace(/\s+/g, ' ').toLowerCase();
+
   const handleAddJoke = () => {
-    if (!jokeInput.trim()) return;
+    const trimmed = jokeInput.trim();
+    if (!trimmed) return;
     if (currentJokes.length >= maxBatchSize) return;
-    setCurrentJokes([...currentJokes, jokeInput.trim()]);
+    const nextNorm = normalizeJoke(trimmed);
+    const isDuplicate = currentJokes.some(j => normalizeJoke(j) === nextNorm);
+    if (isDuplicate) {
+      setJokeAddError('That joke is already in this batch. Please add a different one.');
+      return;
+    }
+    setJokeAddError(null);
+    setCurrentJokes([...currentJokes, trimmed]);
     setJokeInput('');
   };
 
@@ -164,7 +177,10 @@ const JokeMaker: React.FC = () => {
               <div className="flex flex-col gap-2">
                 <textarea
                   value={jokeInput}
-                  onChange={(e) => setJokeInput(e.target.value)}
+                  onChange={(e) => {
+                    setJokeInput(e.target.value);
+                    if (jokeAddError) setJokeAddError(null);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
@@ -176,6 +192,11 @@ const JokeMaker: React.FC = () => {
                   rows={3}
                   disabled={isInputDisabled}
                 />
+                {jokeAddError && (
+                  <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+                    {jokeAddError}
+                  </div>
+                )}
                 <Button 
                   onClick={handleAddJoke} 
                   disabled={!jokeInput.trim() || isInputDisabled}
@@ -244,6 +265,16 @@ const JokeMaker: React.FC = () => {
             <StatBox label="Avg Score" value={avgScore} color="bg-indigo-50 text-indigo-700" />
             <StatBox label="Total Sales" value={mySales} color="bg-amber-50 text-amber-700" />
           </div>
+
+          <Card title="Joke Clipboard">
+            <textarea
+              value={scratchpadText}
+              onChange={(e) => setScratchpadText(e.target.value)}
+              placeholder="Paste your AI-generated jokes here, then copy them into the batch input one by one."
+              className="w-full bg-white border border-gray-300 rounded-md px-3 py-2 text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none resize-y placeholder-gray-400"
+              rows={6}
+            />
+          </Card>
 
           <Card title="Submitted Batches">
             <div className="space-y-4 max-h-[400px] overflow-y-auto">

@@ -160,6 +160,9 @@ export interface ApiRound {
   round_number: number;
   status: string; // backend may return "Active"/"Ended"/"Configured"; we normalize client-side
   batch_size: number;
+  // Some backends expose Round 2 batch cap as `max_batch_size` on /v1/rounds/active.
+  // Keep optional for backward compatibility with older schemas.
+  max_batch_size?: number;
   customer_budget: number;
   started_at?: string | null;
   ended_at?: string | null;

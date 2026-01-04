@@ -61,6 +61,10 @@ const Instructor: React.FC = () => {
   const lastSalesTotalsRef = useRef<Record<string, number> | null>(null);
   const salesEventIndexRef = useRef<number>(0);
 
+  // Keep local inputs aligned with server-driven config changes (polling/reset).
+  useEffect(() => setLocalBatchSize(config.round1BatchSize), [config.round1BatchSize]);
+  useEffect(() => setLocalBudget(config.customerBudget), [config.customerBudget]);
+
   const handleDeleteUser = async (userId: string, displayName?: string) => {
     const label = displayName ? `${displayName} (${userId})` : `user ${userId}`;
     if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
@@ -1293,9 +1297,26 @@ const Instructor: React.FC = () => {
               </Button>
               <Button
                 variant="danger"
-                onClick={() => {
+                onClick={async () => {
                   setShowResetConfirm(false);
-                  resetGame();
+                  const ok = await resetGame();
+                  if (!ok) return;
+
+                  // Reset leaderboard UI state (data is cleared in resetGame()).
+                  leaderboardRoundTouchedRef.current = false;
+                  setLeaderboardRoundTab(1);
+                  setLeaderboardSortKey('total_sales');
+                  setLeaderboardSortDir('desc');
+                  setRankUpTeamIds([]);
+                  prevLeaderboardPosRef.current = null;
+                  (Object.values(rankUpTimersRef.current) as number[]).forEach(t => window.clearTimeout(t));
+                  rankUpTimersRef.current = {};
+
+                  // Reset local chart series derived from leaderboard changes.
+                  setLocalSalesOverTime([]);
+                  lastSalesTotalsRef.current = null;
+                  salesEventIndexRef.current = 0;
+                  setExpandedChart(null);
                 }}
               >
                 Yes, Reset
@@ -1456,7 +1477,13 @@ const Instructor: React.FC = () => {
               <div className="flex items-center space-x-2">
                  {!config.isActive ? (
                  <Button 
-                     onClick={() => setGameActive(true)}
+                    onClick={async () => {
+                      // When starting Round 2, force-close team popups and sync the toggle state.
+                      if (config.round === 2) {
+                        await toggleTeamPopup(false);
+                      }
+                      await setGameActive(true);
+                    }}
                      variant="success"
                    className="w-32 flex justify-center items-center gap-2"
                  >

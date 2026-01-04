@@ -303,7 +303,7 @@ interface GameContextType {
   setGameActive: (active: boolean) => Promise<void>;
   endRound: () => Promise<void>;
   toggleTeamPopup: (show: boolean) => Promise<void>;
-  resetGame: () => void;
+  resetGame: () => Promise<boolean>;
   
   // Lobby / Team Formation
   calculateValidCustomerOptions: () => number[];
@@ -528,8 +528,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     ? Number(r1?.batch_size)
                     : prev.round1BatchSize;
                 const nextRound2BatchLimit =
-                  shouldUseBackendConfig && Number(r2?.batch_size) > 1
-                    ? Number(r2?.batch_size)
+                  shouldUseBackendConfig && Number((r2 as any)?.max_batch_size ?? (r2 as any)?.MaxBatchSize ?? r2?.batch_size) > 1
+                    ? Number((r2 as any)?.max_batch_size ?? (r2 as any)?.MaxBatchSize ?? r2?.batch_size)
                     : (prev.round2BatchLimit ?? DEFAULT_ROUND2_BATCH_LIMIT);
                 return {
                   ...prev,
@@ -821,8 +821,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               ? Number(r1?.batch_size)
               : prev.round1BatchSize;
           const nextRound2BatchLimit =
-            shouldUseBackendConfig && Number(r2?.batch_size) > 1
-              ? Number(r2?.batch_size)
+            shouldUseBackendConfig && Number((r2 as any)?.max_batch_size ?? (r2 as any)?.MaxBatchSize ?? r2?.batch_size) > 1
+              ? Number((r2 as any)?.max_batch_size ?? (r2 as any)?.MaxBatchSize ?? r2?.batch_size)
               : (prev.round2BatchLimit ?? DEFAULT_ROUND2_BATCH_LIMIT);
           return {
             ...prev,
@@ -1804,28 +1804,31 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   
   const resetGame = async () => {
     // Only instructors can reset; requires X-User-Id header (already set by apiClient via localStorage).
-    if (!user || user.role !== ('INSTRUCTOR' as Role)) return;
+    if (!user || user.role !== ('INSTRUCTOR' as Role)) return false;
     try {
       await instructorService.reset();
     } catch {
       alert('Failed to reset game.');
-      return;
+      return false;
     }
     // Clear local game state but keep instructor logged in (do NOT logout).
     // Polling will re-hydrate roundId/lobby after reset.
     setConfig(initialConfig());
+    setRoundId(null);
     setRoster([]);
     setBatches([]);
     setMarketItems([]);
     setTeamSummary(null);
     setInstructorLobby(null);
     setInstructorStats(null);
+    setInstructorStatsByRoundNumber({ 1: null, 2: null });
     setQcQueue(null);
     setTeamNames(INITIAL_TEAM_NAMES);
     submittedBatchJokesRef.current = {};
     qcRatedHistoryRef.current = {};
     localStorage.removeItem(LS_SUBMITTED_BATCH_JOKES);
     localStorage.removeItem(LS_QC_RATED_HISTORY);
+    return true;
   };
 
   return (
