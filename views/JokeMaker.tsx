@@ -13,10 +13,10 @@ const performanceTagUi = (raw: unknown): { text: string; boxColor: string } => {
     return { text: 'High Demand', boxColor: 'bg-emerald-50 text-emerald-800' };
   }
   if (key === 'AVG' || key === 'AVERAGE' || key === 'AVG_PERFORMING' || key === 'AVERAGE_PERFORMING') {
-    return { text: 'Moderate Demand', boxColor: 'bg-amber-50 text-amber-800' };
+    return { text: 'Regular Demand', boxColor: 'bg-amber-50 text-amber-800' };
   }
   if (key === 'LOW_PERFORMING' || key === 'LOW') {
-    return { text: 'High Leftover', boxColor: 'bg-red-50 text-red-800' };
+    return { text: 'Overstocked', boxColor: 'bg-red-50 text-red-800' };
   }
   return { text: '-', boxColor: 'bg-slate-50 text-slate-700' };
 };
@@ -48,15 +48,13 @@ const JokeMaker: React.FC = () => {
       : '—';
   const profitValueColor =
     profitNum !== null && Number.isFinite(profitNum)
-      ? (profitNum > 0 ? 'text-emerald-700' : profitNum < 0 ? 'text-red-700' : 'text-slate-700')
+      ? (profitNum < 0 ? 'text-red-700' : 'text-emerald-700')
       : 'text-slate-700';
   const profitBoxColor =
     profitNum !== null && Number.isFinite(profitNum)
-      ? (profitNum > 0
-        ? 'bg-emerald-50 text-emerald-800'
-        : profitNum < 0
-          ? 'bg-red-50 text-red-800'
-          : 'bg-slate-50 text-slate-700')
+      ? (profitNum < 0
+        ? 'bg-red-50 text-red-800'
+        : 'bg-emerald-50 text-emerald-800')
       : 'bg-slate-50 text-slate-700';
 
   const isRound1 = config.round === 1;

@@ -657,7 +657,9 @@ const Instructor: React.FC = () => {
                 <td className="px-3 py-2 text-right text-gray-800">{row.total_jokes}</td>
                 <td className="px-3 py-2 text-right text-gray-800">{row.avg_score_overall.toFixed(1)}</td>
                 <td className="px-3 py-2 text-right text-gray-800">{row.total_sales}</td>
-                <td className="px-3 py-2 text-right font-bold text-emerald-700">{Number(row.profit).toFixed(2)}</td>
+                <td className={`px-3 py-2 text-right font-bold ${Number(row.profit) < 0 ? 'text-red-700' : 'text-emerald-700'}`}>
+                  {Number(row.profit).toFixed(2)}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -1332,12 +1334,13 @@ const Instructor: React.FC = () => {
             <p className="text-sm text-gray-700">
               This will clear all game data. Are you sure you want to reset?
             </p>
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setShowResetConfirm(false)}>
+            <div className="grid grid-cols-2 gap-3 mt-6">
+              <Button variant="secondary" onClick={() => setShowResetConfirm(false)} className="w-full">
                 Cancel
               </Button>
               <Button
                 variant="danger"
+                className="w-full font-bold"
                 onClick={async () => {
                   setShowResetConfirm(false);
                   const ok = await resetGame();
@@ -1376,18 +1379,19 @@ const Instructor: React.FC = () => {
             <p className="text-sm text-gray-700">
               End Round 1 now? This will advance the game to Round 2.
             </p>
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setShowEndRound1Confirm(false)}>
+            <div className="grid grid-cols-2 gap-3 mt-6">
+              <Button variant="secondary" onClick={() => setShowEndRound1Confirm(false)} className="w-full">
                 Cancel
               </Button>
               <Button
                 variant="danger"
+                className="w-full font-bold"
                 onClick={() => {
                   setShowEndRound1Confirm(false);
                   endRound();
                 }}
               >
-                Yes
+                Yes, End Round
               </Button>
             </div>
           </div>
@@ -1530,7 +1534,7 @@ const Instructor: React.FC = () => {
         )}
 
         {/* Top Controls Bar */}
-        <Card>
+        <Card className="border-t-4 border-t-blue-500">
           <div className="flex flex-col space-y-4">
             {/* Row 1: Game Flow */}
             <div className="flex flex-wrap justify-between items-center gap-4">
@@ -1695,7 +1699,7 @@ const Instructor: React.FC = () => {
         {/* Dashboard grid */}
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
           {/* Team Management (full width) */}
-          <Card className="xl:col-span-2" title="Team Management (Drag to Move, Click to Switch Role)">
+          <Card className="xl:col-span-2 border-t-4 border-t-purple-500" title="Team Management (Drag to Move, Click to Switch Role)">
             <div className="space-y-4">
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 {/* Two columns of production teams (JM/QC) */}

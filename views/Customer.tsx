@@ -3,7 +3,7 @@ import { useGame } from '../context';
 import { Button, Card, RoleLayout } from '../components';
 import { ShoppingBag, RotateCcw, DollarSign } from 'lucide-react';
 
-const performanceBadge = (raw: unknown): { label: string; className: string } => {
+const performanceBadge = (raw: unknown): { label: string; className: string } | null => {
   const key = String(raw ?? '')
     .trim()
     .toUpperCase()
@@ -12,7 +12,7 @@ const performanceBadge = (raw: unknown): { label: string; className: string } =>
   // Backend variants: HIGH_PERFORMING / HIGH PERFORMING, AVG/AVERAGE, LOW_PERFORMING, etc.
   if (key === 'HIGH_PERFORMING' || key === 'HIGH') {
     return {
-      label: 'High Demand',
+      label: 'Best Seller',
       className: 'bg-gradient-to-r from-emerald-50 to-emerald-100 text-emerald-900 ring-1 ring-emerald-200',
     };
   }
@@ -23,15 +23,12 @@ const performanceBadge = (raw: unknown): { label: string; className: string } =>
     key === 'AVG'
   ) {
     return {
-      label: 'Standard',
-      className: 'bg-gradient-to-r from-slate-50 to-slate-100 text-slate-900 ring-1 ring-slate-200',
+      label: 'Trending',
+      className: 'bg-gradient-to-r from-blue-50 to-indigo-50 text-indigo-900 ring-1 ring-indigo-200/50',
     };
   }
   if (key === 'LOW_PERFORMING' || key === 'LOW') {
-    return {
-      label: 'Low Selectivity',
-      className: 'bg-gradient-to-r from-rose-50 to-rose-100 text-rose-900 ring-1 ring-rose-200',
-    };
+    return null;
   }
   return {
     label: 'Standard',
@@ -123,7 +120,7 @@ const Customer: React.FC = () => {
                  const isExpanded = Boolean(expandedJokeIds[joke.id]);
                  const isLongJoke = joke.content.trim().length > 180;
                  const perf = performanceBadge(joke.teamPerfLabel);
-                 const teamBadgeText = `${joke.teamName} – ${perf.label}`;
+                 const teamBadgeText = perf ? `${joke.teamName} – ${perf.label}` : joke.teamName;
                  return (
                    <Card key={joke.id} className="transition hover:shadow-md">
                      <div className="flex justify-between items-start h-full">
@@ -131,8 +128,8 @@ const Customer: React.FC = () => {
                          <div className="flex items-center space-x-2 mb-2">
                            <span
                              className={
-                               `inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-extrabold tracking-wide ` +
-                               `shadow-sm ${perf.className}`
+                               `inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-extrabold tracking-wide shadow-sm ` +
+                               (perf ? perf.className : 'bg-gray-100 text-gray-700 border border-gray-200')
                              }
                              title={String(joke.teamPerfLabel ?? '')}
                            >

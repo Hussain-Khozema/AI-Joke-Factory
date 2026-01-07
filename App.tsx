@@ -70,7 +70,7 @@ const LoginScreen: React.FC = () => {
                   className="w-full bg-white border border-gray-300 rounded-lg px-4 py-2.5 text-gray-900 focus:ring-2 focus:ring-blue-600 focus:border-blue-600 outline-none transition-all placeholder-gray-400"
                   value={name}
                   onChange={e => setName(e.target.value)}
-                  placeholder="e.g. John, Joe"
+                  placeholder="e.g. John_Joe"
                 />
                 <p className="text-xs text-gray-500 mt-1">Enter both students who will share this role.</p>
               </div>

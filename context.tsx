@@ -371,6 +371,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [qcQueue, setQcQueue] = useState<ApiQcQueueNextResponse | null>(null);
   const teamSummaryUnsupportedRef = useRef<boolean>(false);
   const lastInstructorStatsFetchRef = useRef<Record<number, number>>({});
+  const qcNextRetryAfterRef = useRef<number>(0);
 
   // Local caches to preserve UI that expects joke text (API does not return it for batch history).
   const submittedBatchJokesRef = useRef<Record<string, string[]>>({});
@@ -1130,21 +1131,43 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           try {
             const countRaw = await qcService.queueCount(effectiveRound);
             const countAny: any = (countRaw as any)?.data ?? countRaw;
-            const size = Number(countAny?.queue_size ?? 0);
+            // Support both queue_size and count field names.
+            const size = Number(countAny?.queue_size ?? countAny?.count ?? 0);
             if (!size) {
               if (!cancelled) setQcQueue(null);
             } else {
-              const rawQ = await qcService.queueNext(effectiveRound);
-              const qAny: any = rawQ;
-              const qData = (qAny?.data ?? qAny) as any;
-              normalizedQueue = qData
-                ? {
-                    batch: qData.batch,
-                    jokes: Array.isArray(qData.jokes) ? qData.jokes : [],
-                    queue_size: qData.queue_size ?? size,
+              // OPTIMIZATION: If we already have a batch loaded in the UI, don't poll for the next one yet.
+              // This prevents unnecessary 404s and network noise while the user is actively rating.
+              if (qcQueue) return;
+
+              // Only call queue/next if we are not in a backoff period from a recent 404.
+              const now = Date.now();
+              if (now >= qcNextRetryAfterRef.current) {
+                try {
+                  const rawQ = await qcService.queueNext(effectiveRound);
+                  const qAny: any = rawQ;
+                  const qData = (qAny?.data ?? qAny) as any;
+                  normalizedQueue = qData
+                    ? {
+                        batch: qData.batch,
+                        jokes: Array.isArray(qData.jokes) ? qData.jokes : [],
+                        queue_size: qData.queue_size ?? size,
+                      }
+                    : null;
+                  if (!cancelled) setQcQueue(normalizedQueue);
+                  qcNextRetryAfterRef.current = 0; // success, clear backoff
+                } catch (e) {
+                  // If queue/next 404s despite count > 0, it usually means the batch 
+                  // is already locked by another QC or not available to this user.
+                  if (e instanceof ApiError && e.status === 404) {
+                    if (!cancelled) setQcQueue(null);
+                    // Back off for 30 seconds to avoid spamming 404s if count is lying.
+                    qcNextRetryAfterRef.current = Date.now() + 30000;
+                  } else {
+                    throw e; // rethrow other errors to be caught by outer block
                   }
-                : null;
-              if (!cancelled) setQcQueue(normalizedQueue);
+                }
+              }
             }
           } catch {
             if (!cancelled) setQcQueue(null);
