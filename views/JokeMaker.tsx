@@ -4,6 +4,23 @@ import { Button, Card, StatBox, RoleLayout, Modal } from '../components';
 import { Plus, Trash2, Send, CheckCircle, AlertCircle, MessageSquare } from 'lucide-react';
 import { Role, Batch } from '../types';
 
+const performanceTagUi = (raw: unknown): { text: string; boxColor: string } => {
+  const key = String(raw ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s_]+/g, '_');
+  if (key === 'HIGH_PERFORMING' || key === 'HIGH') {
+    return { text: 'High Demand', boxColor: 'bg-emerald-50 text-emerald-800' };
+  }
+  if (key === 'AVG' || key === 'AVERAGE' || key === 'AVG_PERFORMING' || key === 'AVERAGE_PERFORMING') {
+    return { text: 'Moderate Demand', boxColor: 'bg-amber-50 text-amber-800' };
+  }
+  if (key === 'LOW_PERFORMING' || key === 'LOW') {
+    return { text: 'High Leftover', boxColor: 'bg-red-50 text-red-800' };
+  }
+  return { text: '-', boxColor: 'bg-slate-50 text-slate-700' };
+};
+
 const JokeMaker: React.FC = () => {
   const { user, roster, batches, addBatch, config, teamSummary } = useGame();
   
@@ -23,6 +40,24 @@ const JokeMaker: React.FC = () => {
   const avgScore = teamSummary ? teamSummary.avg_score_overall.toFixed(1) : 'N/A';
   const mySales = teamSummary?.total_sales ?? 0;
   const myRank = teamSummary?.rank ?? '-';
+  const perfTag = performanceTagUi((teamSummary as any)?.performance_label);
+  const profitNum = typeof (teamSummary as any)?.profit === 'number' ? Number((teamSummary as any).profit) : null;
+  const profit =
+    profitNum !== null && Number.isFinite(profitNum)
+      ? `$${profitNum.toFixed(2)}`
+      : '—';
+  const profitValueColor =
+    profitNum !== null && Number.isFinite(profitNum)
+      ? (profitNum > 0 ? 'text-emerald-700' : profitNum < 0 ? 'text-red-700' : 'text-slate-700')
+      : 'text-slate-700';
+  const profitBoxColor =
+    profitNum !== null && Number.isFinite(profitNum)
+      ? (profitNum > 0
+        ? 'bg-emerald-50 text-emerald-800'
+        : profitNum < 0
+          ? 'bg-red-50 text-red-800'
+          : 'bg-slate-50 text-slate-700')
+      : 'bg-slate-50 text-slate-700';
 
   const isRound1 = config.round === 1;
   // Before Round 1 starts, backend may still report a placeholder batch size (often 1).
@@ -261,9 +296,22 @@ const JokeMaker: React.FC = () => {
         <div className="space-y-6">
           <div className="grid grid-cols-2 gap-4">
             <StatBox label="Current Rank" value={myRank} color="bg-green-100 text-green-900 border-2 border-green-400 shadow-md" />
-            <StatBox label="Batches Created" value={totalBatches} />
+            <StatBox
+              label="Performance Tag"
+              value={perfTag.text}
+              color={perfTag.boxColor}
+              valueClassName="text-xl jf-text-outline"
+              labelClassName="text-xs"
+            />
             <StatBox label="Avg Score" value={avgScore} color="bg-indigo-50 text-indigo-700" />
+            <StatBox label="Batches Created" value={totalBatches} />
             <StatBox label="Total Sales" value={mySales} color="bg-amber-50 text-amber-700" />
+            <StatBox
+              label="Profit"
+              value={profit}
+              color={profitBoxColor}
+              valueClassName={profitValueColor}
+            />
           </div>
 
           <Card title="Joke Clipboard">
@@ -271,8 +319,8 @@ const JokeMaker: React.FC = () => {
               value={scratchpadText}
               onChange={(e) => setScratchpadText(e.target.value)}
               placeholder="Paste your AI-generated jokes here, then copy them into the batch input one by one."
-              className="w-full bg-white border border-gray-300 rounded-md px-3 py-2 text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none resize-y placeholder-gray-400"
-              rows={6}
+              className="w-full h-[300px] bg-white border border-gray-300 rounded-md px-3 py-2 text-gray-900 focus:ring-2 focus:ring-blue-500 outline-none resize-y placeholder-gray-400"
+              rows={12}
             />
           </Card>
 

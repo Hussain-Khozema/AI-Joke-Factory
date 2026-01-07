@@ -34,6 +34,7 @@ const LS_SUBMITTED_BATCH_JOKES = 'joke_factory_submitted_batch_jokes_v1';
 const LS_QC_RATED_HISTORY = 'joke_factory_qc_rated_history_v1';
 
 const DEFAULT_ROUND2_BATCH_LIMIT = 10;
+const DEFAULT_UNSOLD_JOKE_PENALTY = 0.1;
 
 // Helper to init team names (fallback, will be replaced by /v1/teams where possible)
 const INITIAL_TEAM_NAMES: Record<string, string> = {};
@@ -180,7 +181,9 @@ function normalizeInstructorStats(raw: any): ApiInstructorStatsResponse {
     team: normalizeTeam(item.team ?? item.Team ?? {}),
     points: Number(item.points ?? item.Points ?? 0),
     total_sales: Number(item.total_sales ?? item.TotalSales ?? 0),
+    unsold_jokes: Number(item.unsold_jokes ?? item.UnsoldJokes ?? item.unsoldJokes ?? 0),
     batches_rated: Number(item.batches_rated ?? item.BatchesRated ?? 0),
+    profit: Number(item.profit ?? item.Profit ?? 0),
     total_jokes: Number(item.total_jokes ?? item.TotalJokes ?? 0),
     avg_score_overall: Number(item.avg_score_overall ?? item.AvgScoreOverall ?? 0),
     accepted_jokes: Number(item.accepted_jokes ?? item.AcceptedJokes ?? 0),
@@ -384,9 +387,10 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     showTeamPopup: false,
     startTime: null,
     elapsedTime: 0,
-    customerBudget: 10,
+    customerBudget: 20,
     round1BatchSize: 5,
     round2BatchLimit: DEFAULT_ROUND2_BATCH_LIMIT,
+    unsoldJokePenalty: DEFAULT_UNSOLD_JOKE_PENALTY,
   });
 
   const [config, setConfig] = useState<GameConfig>(initialConfig());
@@ -568,6 +572,35 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           if (!effectiveRoundId) return;
           try {
+            // Market list for instructor (read-only): supports the instructor Live Market panel.
+            // Best-effort; if it fails we keep the last known marketItems.
+            try {
+              const marketRaw = await customerService.market(effectiveRoundId);
+              const market: any = (marketRaw as any)?.data ?? marketRaw;
+              const items = (market?.items ?? []) as ApiMarketItem[];
+              if (!cancelled) {
+                setMarketItems(prev => {
+                  if (prev.length !== items.length) return items;
+                  for (let i = 0; i < prev.length; i++) {
+                    const a = prev[i];
+                    const b = items[i];
+                    if (
+                      a.joke_id !== b.joke_id ||
+                      a.is_bought_by_me !== b.is_bought_by_me ||
+                      a.team?.id !== b.team?.id ||
+                      Number((a as any).bought_count ?? (a as any).boughtCount ?? 0) !==
+                        Number((b as any).bought_count ?? (b as any).boughtCount ?? 0)
+                    ) {
+                      return items;
+                    }
+                  }
+                  return prev;
+                });
+              }
+            } catch {
+              // ignore
+            }
+
             const rawLobby = await instructorService.lobby(effectiveRoundId);
             let stats: any = null;
 
@@ -861,7 +894,9 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   if (
                     a.joke_id !== b.joke_id ||
                     a.is_bought_by_me !== b.is_bought_by_me ||
-                    a.team?.id !== b.team?.id
+                    a.team?.id !== b.team?.id ||
+                    Number((a as any).bought_count ?? (a as any).boughtCount ?? 0) !==
+                      Number((b as any).bought_count ?? (b as any).boughtCount ?? 0)
                   ) {
                     return items;
                   }
@@ -1133,6 +1168,38 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
           }
 
+          // QC batch history: load team batches from API so refresh/logout can restore submitted/rated batch stats.
+          // Merge with locally persisted QC-rated history to preserve feedback/tags where the API omits them.
+          const qcTeamId = (me.assignment?.team_id ?? null) as TeamId | null;
+          let didHydrateBatchesFromApi = false;
+          if (qcTeamId) {
+            try {
+              const listRaw = await jmService.listTeamBatches(effectiveRound, qcTeamId);
+              const listData: any = (listRaw as any)?.data ?? listRaw;
+              const batchesArr: any[] = Array.isArray(listData?.batches) ? listData.batches : [];
+              const roundNumber = apiRoundNumber ?? config.round ?? 1;
+              const mapped = batchesArr.map(b =>
+                mapBatchFromTeamList(
+                  roundNumber,
+                  qcTeamId,
+                  b,
+                  submittedBatchJokesRef.current[`${effectiveRound}:${String(b.batch_id)}`],
+                ),
+              );
+              const qcExtra = Object.values(qcRatedHistoryRef.current).filter((b: Batch) => b.team_id === qcTeamId);
+              const merged = [...mapped, ...qcExtra].reduce<Record<string, Batch>>((acc, b: Batch) => {
+                acc[String(b.batch_id)] = b;
+                return acc;
+              }, {} as Record<string, Batch>);
+              if (!cancelled) {
+                setBatches(Object.values(merged).sort((a, b) => (a.batch_id - b.batch_id)));
+                didHydrateBatchesFromApi = true;
+              }
+            } catch {
+              // ignore; fallback below
+            }
+          }
+
           if (popupActive) {
             const popupTeamId = (summaryTeamId ?? me.assignment.team_id ?? null) as TeamId | null;
             // Use /session/me teammates to populate popup (no lobby fetch).
@@ -1154,8 +1221,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setRoster([nextUser]);
           }
 
-          // Keep local rated history visible in QC UI (no API endpoint for history provided).
-          if (!cancelled) {
+          // Fallback: if API list isn't available, keep local rated history visible in QC UI.
+          if (!cancelled && !didHydrateBatchesFromApi) {
             const hist = Object.values(qcRatedHistoryRef.current);
             setBatches(hist);
           }
@@ -1719,6 +1786,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (isActive) {
         const batch_size = config.round === 2 ? config.round2BatchLimit : config.round1BatchSize;
         const customer_budget = config.customerBudget;
+        const unsold_jokes_penalty = config.unsoldJokePenalty;
         // Prevent sending obviously invalid defaults (some backends report 0/1 before start).
         if (!Number.isFinite(customer_budget) || customer_budget <= 0) {
           alert('Customer budget must be greater than 0.');
@@ -1728,9 +1796,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           alert('Batch size must be at least 2.');
           return;
         }
+        if (!Number.isFinite(unsold_jokes_penalty) || unsold_jokes_penalty < 0) {
+          alert('Unsold joke penalty must be 0 or greater.');
+          return;
+        }
         await instructorService.start(rid, {
           customer_budget,
           batch_size,
+          unsold_jokes_penalty,
         });
       }
       setConfig(prev => ({
@@ -1794,8 +1867,11 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           };
         }
 
-        // After ending Round 2, go back to lobby.
-        return { ...prev, isActive: false, status: 'LOBBY', startTime: null, elapsedTime: 0 };
+        // After ending Round 2, do NOT return to lobby setup (auto-assign).
+        // Keep UI in PLAYING (but inactive) so instructor can resume Round 2,
+        // and only show lobby setup again after an explicit reset.
+        // Keep elapsedTime as the final value (do not reset to 0).
+        return { ...prev, isActive: false, status: 'PLAYING', startTime: null, elapsedTime: prev.elapsedTime };
       });
     } catch {
       alert('Failed to end round.');

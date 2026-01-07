@@ -103,12 +103,19 @@ export interface GameConfig {
   customerBudget: number;
   round1BatchSize: number;
   round2BatchLimit: number;
+  /**
+   * Dollar penalty applied to a team's score/sales for each unsold joke.
+   * Set by instructor before starting the round.
+   */
+  unsoldJokePenalty: number;
 }
 
 // --- API shapes (schema-aligned) ---
 export interface Team {
   id: TeamId;
   name: string;
+  // Some endpoints (e.g., market) include an optional performance label.
+  performance_label?: string;
 }
 
 export interface ApiErrorResponse {
@@ -182,13 +189,16 @@ export interface ApiTeamSummaryResponse {
   team: Team;
   round_id: RoundId;
   rank: number;
+  performance_label?: string;
   points: number;
   total_sales: number;
+  profit?: number;
   batches_created: number;
   batches_rated: number;
   accepted_jokes: number;
   avg_score_overall: number;
   unrated_batches: number;
+  unsold_jokes?: number;
 }
 
 export interface ApiTeamBatchesResponse {
@@ -246,6 +256,8 @@ export interface ApiMarketItem {
   joke_text: string;
   team: Team;
   is_bought_by_me: boolean;
+  // Newer backends expose how many times a joke has been purchased.
+  bought_count?: number;
 }
 
 export interface ApiMarketResponse {
@@ -285,7 +297,9 @@ export interface ApiInstructorStatsResponse {
     team: Team;
     points: number;
     total_sales: number;
+    unsold_jokes: number;
     batches_rated: number;
+    profit: number;
     total_jokes: number;
     avg_score_overall: number;
     accepted_jokes: number;

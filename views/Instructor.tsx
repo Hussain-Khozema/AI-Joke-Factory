@@ -4,7 +4,7 @@ import { Button, Card, RoleLayout, Modal } from '../components';
 import { Play, RefreshCw, Settings, Clock, StopCircle, GripVertical, Users, CheckCircle, Maximize2, X, Trash2 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  LineChart, Line, ScatterChart, Scatter, Legend
+  LineChart, Line, Legend
 } from 'recharts';
 import { Role } from '../types';
 
@@ -16,7 +16,7 @@ const PALETTE = [
 ];
 
 const INSTRUCTOR_HIDDEN_CHARTS_SESSION_KEY = 'joke_factory_instructor_hidden_charts_v1';
-const CHART_KEYS = ['sales', 'sequence_quality', 'size_quality'] as const;
+const CHART_KEYS = ['sales', 'sequence_quality'] as const;
 type ChartKey = typeof CHART_KEYS[number];
 
 const Instructor: React.FC = () => {
@@ -29,17 +29,22 @@ const Instructor: React.FC = () => {
     , instructorStatsRound2
     , endRound
     , deleteUser
+    , marketItems
   } = useGame();
 
   const [localBatchSize, setLocalBatchSize] = useState(config.round1BatchSize);
   const [localBudget, setLocalBudget] = useState(config.customerBudget);
+  const [localUnsoldJokePenalty, setLocalUnsoldJokePenalty] = useState(config.unsoldJokePenalty);
   const [selectedCustomerCount, setSelectedCustomerCount] = useState<number | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showEndRound1Confirm, setShowEndRound1Confirm] = useState(false);
 
   // Expanded Chart State
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
   const [salesTab, setSalesTab] = useState<'R1' | 'R2' | 'BOTH'>('R2');
   const [sequenceTab, setSequenceTab] = useState<'R1' | 'R2' | 'BOTH'>('R2');
+  const [salesTeamFilter, setSalesTeamFilter] = useState<string>('ALL');
+  const [sequenceTeamFilter, setSequenceTeamFilter] = useState<string>('ALL');
   const [hoveredSalesSeriesKey, setHoveredSalesSeriesKey] = useState<string | null>(null);
   const [hoveredSequenceSeriesKey, setHoveredSequenceSeriesKey] = useState<string | null>(null);
   const [leaderboardRoundTab, setLeaderboardRoundTab] = useState<1 | 2>((config.round === 2 ? 2 : 1) as 1 | 2);
@@ -49,12 +54,15 @@ const Instructor: React.FC = () => {
   const [hiddenCharts, setHiddenCharts] = useState<ChartKey[]>([]);
   const [deletingUserIds, setDeletingUserIds] = useState<string[]>([]);
   const [leaderboardSortKey, setLeaderboardSortKey] = useState<
-    'team' | 'rated_batches' | 'accepted_jokes' | 'total_jokes' | 'avg_score_overall' | 'total_sales'
-  >('total_sales');
+    'team' | 'rated_batches' | 'accepted_jokes' | 'unsold_jokes' | 'total_jokes' | 'avg_score_overall' | 'total_sales' | 'profit'
+  >('profit');
   const [leaderboardSortDir, setLeaderboardSortDir] = useState<'asc' | 'desc'>('desc');
   const [rankUpTeamIds, setRankUpTeamIds] = useState<string[]>([]);
   const prevLeaderboardPosRef = useRef<Record<string, number> | null>(null);
   const rankUpTimersRef = useRef<Record<string, number>>({});
+  const [marketSortDir, setMarketSortDir] = useState<'asc' | 'desc'>('desc');
+  const [expandedMarketJokeIds, setExpandedMarketJokeIds] = useState<Record<string, boolean>>({});
+  const [round2ResumeHint, setRound2ResumeHint] = useState(false);
   const [localSalesOverTime, setLocalSalesOverTime] = useState<
     Array<{ event_index: number; timestamp: string; team_id: number; team_name: string; total_sales: number }>
   >([]);
@@ -64,6 +72,7 @@ const Instructor: React.FC = () => {
   // Keep local inputs aligned with server-driven config changes (polling/reset).
   useEffect(() => setLocalBatchSize(config.round1BatchSize), [config.round1BatchSize]);
   useEffect(() => setLocalBudget(config.customerBudget), [config.customerBudget]);
+  useEffect(() => setLocalUnsoldJokePenalty(config.unsoldJokePenalty), [config.unsoldJokePenalty]);
 
   const handleDeleteUser = async (userId: string, displayName?: string) => {
     const label = displayName ? `${displayName} (${userId})` : `user ${userId}`;
@@ -122,18 +131,21 @@ const Instructor: React.FC = () => {
 
   // Config edit rules:
   // - While a round is active: config is not editable.
-  // - In round 2: only customer budget is editable.
+  // - In round 2: only customer budget + unsold joke penalty are editable.
   const canEditBatchSize = !config.isActive && config.round === 1;
   const canEditBudget = !config.isActive && (config.round === 1 || config.round === 2);
+  const canEditUnsoldJokePenalty = !config.isActive && (config.round === 1 || config.round === 2);
 
   const hasPendingConfigChanges =
     (canEditBatchSize && localBatchSize !== config.round1BatchSize) ||
-    (canEditBudget && localBudget !== config.customerBudget);
+    (canEditBudget && localBudget !== config.customerBudget) ||
+    (canEditUnsoldJokePenalty && localUnsoldJokePenalty !== config.unsoldJokePenalty);
 
   const handleUpdateSettings = () => {
     const updates: any = {};
     if (canEditBatchSize && localBatchSize !== config.round1BatchSize) updates.round1BatchSize = localBatchSize;
     if (canEditBudget && localBudget !== config.customerBudget) updates.customerBudget = localBudget;
+    if (canEditUnsoldJokePenalty && localUnsoldJokePenalty !== config.unsoldJokePenalty) updates.unsoldJokePenalty = localUnsoldJokePenalty;
     if (Object.keys(updates).length === 0) return;
     updateConfig(updates);
   };
@@ -158,15 +170,19 @@ const Instructor: React.FC = () => {
     if (!leaderboardRoundTouchedRef.current) setLeaderboardRoundTab(r);
   }, [config.round]);
 
+  // Clear "resume" hint once Round 2 becomes active or user switches away from Round 2.
+  useEffect(() => {
+    if (config.isActive || config.round !== 2) setRound2ResumeHint(false);
+  }, [config.isActive, config.round]);
+
+  const shouldShowRound2Resume =
+    config.round === 2 &&
+    !config.isActive &&
+    (round2ResumeHint || Boolean(instructorStatsRound2?.round_id));
+
   const statsR1 = instructorStatsRound1 ?? null;
   const statsR2 = instructorStatsRound2 ?? null;
   const leaderboardStatsSelected = (leaderboardRoundTab === 1 ? statsR1 : statsR2) ?? instructorStats ?? null;
-  const sizeChartStatsSelected = (() => {
-    const primary = (config.round === 2 ? statsR2 : statsR1) ?? null;
-    const secondary = (config.round === 2 ? statsR1 : statsR2) ?? null;
-    const candidates = [primary, secondary, instructorStats ?? null].filter(Boolean) as any[];
-    return candidates.find(s => (s?.batch_quality_by_size?.length ?? 0) > 0) ?? candidates[0] ?? null;
-  })();
 
   const leaderboardBase = useMemo(() => {
     return (leaderboardStatsSelected?.leaderboard || []).map(row => {
@@ -177,9 +193,11 @@ const Instructor: React.FC = () => {
       team_name: teamName,
       rated_batches: Number(row.batches_rated ?? 0),
       accepted_jokes: Number(row.accepted_jokes ?? 0),
+      unsold_jokes: Number((row as any).unsold_jokes ?? 0),
         total_jokes: Number(row.total_jokes ?? 0),
       avg_score_overall: Number(row.avg_score_overall ?? 0),
       total_sales: Number(row.total_sales ?? 0),
+      profit: Number((row as any).profit ?? 0),
     };
   });
   }, [leaderboardStatsSelected?.leaderboard, teamNames]);
@@ -315,6 +333,25 @@ const Instructor: React.FC = () => {
   // Demo constraint: cap the displayed teams to 20.
   const visibleTeamIds = activeTeamIds.slice(0, 20);
 
+  // Team filters (All Teams or a single selected team).
+  const salesTeamIds = useMemo(() => {
+    if (salesTeamFilter === 'ALL') return visibleTeamIds;
+    if (!visibleTeamIds.includes(String(salesTeamFilter))) return visibleTeamIds;
+    return [String(salesTeamFilter)];
+  }, [salesTeamFilter, visibleTeamIds]);
+  const sequenceTeamIds = useMemo(() => {
+    if (sequenceTeamFilter === 'ALL') return visibleTeamIds;
+    if (!visibleTeamIds.includes(String(sequenceTeamFilter))) return visibleTeamIds;
+    return [String(sequenceTeamFilter)];
+  }, [sequenceTeamFilter, visibleTeamIds]);
+
+  useEffect(() => {
+    if (salesTeamFilter !== 'ALL' && !visibleTeamIds.includes(String(salesTeamFilter))) setSalesTeamFilter('ALL');
+  }, [salesTeamFilter, visibleTeamIds]);
+  useEffect(() => {
+    if (sequenceTeamFilter !== 'ALL' && !visibleTeamIds.includes(String(sequenceTeamFilter))) setSequenceTeamFilter('ALL');
+  }, [sequenceTeamFilter, visibleTeamIds]);
+
   const buildDenseSalesSeries = (
     events: any[],
     teamIds: string[],
@@ -358,7 +395,7 @@ const Instructor: React.FC = () => {
       (instructorStats?.cumulative_sales && instructorStats.cumulative_sales.length > 0)
         ? instructorStats.cumulative_sales
         : localSalesOverTime;
-    const ids = visibleTeamIds;
+    const ids = salesTeamIds;
     if (salesTab === 'BOTH') {
       const s1 = buildDenseSalesSeries(eventsR1, ids, 'r1-');
       const s2 = buildDenseSalesSeries(eventsR2, ids, 'r2-');
@@ -368,13 +405,6 @@ const Instructor: React.FC = () => {
     if (salesTab === 'R2') return buildDenseSalesSeries(eventsR2, ids, '');
     return buildDenseSalesSeries(fallbackEvents, ids, '');
   })();
-
-  const sizeVsQualityData = (sizeChartStatsSelected?.batch_quality_by_size || []).map(item => ({
-    size: item.batch_size,
-    quality: item.avg_score,
-    team: String(item.team_id),
-    name: item.team_name,
-  }));
 
   const buildDenseSequenceSeries = (points: any[], teamIds: string[], keyPrefix: string): any[] => {
     const grouped: Record<number, any> = {};
@@ -404,7 +434,7 @@ const Instructor: React.FC = () => {
   };
 
   const sequenceVsQualityData = (() => {
-    const ids = visibleTeamIds;
+    const ids = sequenceTeamIds;
     const p1 = statsR1?.learning_curve ?? [];
     const p2 = statsR2?.learning_curve ?? [];
     if (sequenceTab === 'BOTH') {
@@ -529,6 +559,22 @@ const Instructor: React.FC = () => {
                   type="button"
                   className="inline-flex items-center hover:text-gray-800"
                   onClick={() => {
+                    setLeaderboardSortKey('unsold_jokes');
+                    setLeaderboardSortDir(prev => (leaderboardSortKey === 'unsold_jokes' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+                  }}
+                  title="Sort by Unsold Jokes"
+                >
+                  <span>Unsold Jokes</span>
+                  <span className="ml-1 w-3 text-center">
+                    {leaderboardSortKey === 'unsold_jokes' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                  </span>
+                </button>
+              </th>
+              <th className="px-3 py-2 text-right font-medium text-gray-500">
+                <button
+                  type="button"
+                  className="inline-flex items-center hover:text-gray-800"
+                  onClick={() => {
                     setLeaderboardSortKey('total_jokes');
                     setLeaderboardSortDir(prev => (leaderboardSortKey === 'total_jokes' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
                   }}
@@ -572,12 +618,28 @@ const Instructor: React.FC = () => {
                   </span>
                 </button>
               </th>
+              <th className="px-3 py-2 text-right font-medium text-gray-500">
+                <button
+                  type="button"
+                  className="inline-flex items-center hover:text-gray-800"
+                  onClick={() => {
+                    setLeaderboardSortKey('profit');
+                    setLeaderboardSortDir(prev => (leaderboardSortKey === 'profit' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+                  }}
+                  title="Sort by Profit"
+                >
+                  <span>Profit</span>
+                  <span className="ml-1 w-3 text-center">
+                    {leaderboardSortKey === 'profit' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                  </span>
+                </button>
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {leaderboardSorted.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-gray-400 italic">
+                <td colSpan={9} className="px-3 py-6 text-center text-gray-400 italic">
                   No leaderboard data yet.
                 </td>
               </tr>
@@ -591,9 +653,11 @@ const Instructor: React.FC = () => {
                 <td className="px-3 py-2 font-semibold text-gray-900">{row.team_name}</td>
                 <td className="px-3 py-2 text-right text-gray-800">{row.rated_batches}</td>
                 <td className="px-3 py-2 text-right text-gray-800">{row.accepted_jokes}</td>
+                <td className="px-3 py-2 text-right text-gray-800">{row.unsold_jokes}</td>
                 <td className="px-3 py-2 text-right text-gray-800">{row.total_jokes}</td>
                 <td className="px-3 py-2 text-right text-gray-800">{row.avg_score_overall.toFixed(1)}</td>
-                <td className="px-3 py-2 text-right font-bold text-emerald-700">{row.total_sales}</td>
+                <td className="px-3 py-2 text-right text-gray-800">{row.total_sales}</td>
+                <td className="px-3 py-2 text-right font-bold text-emerald-700">{Number(row.profit).toFixed(2)}</td>
               </tr>
             ))}
           </tbody>
@@ -608,6 +672,7 @@ const Instructor: React.FC = () => {
     switch(type) {
         case 'sales': {
             const isExpanded = isExpandedView;
+            const teamIds = salesTeamIds;
             const eventsR1 = statsR1?.cumulative_sales ?? [];
             const eventsR2 = statsR2?.cumulative_sales ?? [];
             const teamsWithSalesR1 = new Set<string>(eventsR1.map((e: any) => String(e.team_id)));
@@ -637,11 +702,11 @@ const Instructor: React.FC = () => {
             };
             const labelSeriesKeys = (() => {
               if (!isExpanded) return [] as string[];
-              if (salesTab !== 'BOTH') return visibleTeamIds.map(tid => String(tid));
+              if (salesTab !== 'BOTH') return teamIds.map(tid => String(tid));
               // Smart: if lots of teams, label only R2 to keep it readable.
-              return visibleTeamIds.length > 8
-                ? visibleTeamIds.map(tid => `r2-${tid}`)
-                : visibleTeamIds.flatMap(tid => [`r1-${tid}`, `r2-${tid}`]);
+              return teamIds.length > 8
+                ? teamIds.map(tid => `r2-${tid}`)
+                : teamIds.flatMap(tid => [`r1-${tid}`, `r2-${tid}`]);
             })();
             const lastIndexBySeriesKey: Record<string, number> = {};
             if (isExpanded) {
@@ -775,7 +840,7 @@ const Instructor: React.FC = () => {
                <ResponsiveContainer width="100%" height="100%">
                  <LineChart data={cumulativeSalesData} margin={{ top: 12, bottom: 20, left: 48, right: isExpanded ? 24 : 16 }}>
                    <CartesianGrid strokeDasharray="3 3" />
-                   <XAxis dataKey="index" label={{ value: 'Event Sequence', position: 'insideBottom', offset: -10 }} />
+                   <XAxis dataKey="index" label={{ value: 'Time Elapsed', position: 'insideBottom', offset: -10 }} />
                    <YAxis
                      width={44}
                       allowDecimals={false}
@@ -831,7 +896,7 @@ const Instructor: React.FC = () => {
                                 <span className="font-mono font-bold text-emerald-700">{Number.isFinite(sales) ? sales : 0}</span>
                               </div>
                               <div className="flex justify-between gap-4">
-                                <span className="font-medium">Avg Quality</span>
+                                <span className="font-medium">Avg Score</span>
                                 <span className="font-mono font-bold text-indigo-700">
                                   {Number.isFinite(avg) ? avg.toFixed(1) : '—'}
                                 </span>
@@ -937,41 +1002,14 @@ const Instructor: React.FC = () => {
                </ResponsiveContainer>
             );
         }
-        case 'size_quality':
-            return (
-               <ResponsiveContainer width="100%" height="100%">
-                 <ScatterChart margin={{ bottom: 20, left: 48, right: 16 }}>
-                   <CartesianGrid strokeDasharray="3 3" />
-                   <XAxis
-                     type="number"
-                     dataKey="size"
-                     name="Jokes Count"
-                     domain={[0, 10]}
-                     allowDecimals={false}
-                     ticks={[0, 2, 4, 6, 8, 10]}
-                     interval={0}
-                     label={{ value: 'Jokes Count', position: 'insideBottom', offset: -10 }}
-                   />
-                   <YAxis
-                     width={44}
-                     type="number"
-                     dataKey="quality"
-                     name="Avg Quality"
-                     domain={[0, 5]}
-                    padding={{ top: 12, bottom: 6 }}
-                     label={{ value: 'Avg Quality', angle: -90, position: 'insideLeft', dx: -10 }}
-                   />
-                   <Tooltip cursor={{ strokeDasharray: '3 3' }} />
-                  <Scatter name="Batches" data={sizeVsQualityData} fill="#8884d8" />
-                 </ScatterChart>
-               </ResponsiveContainer>
-            );
         case 'sequence_quality': {
             const isExpanded = isExpandedView;
+            const teamIds = sequenceTeamIds;
             const pointsR1 = statsR1?.learning_curve ?? [];
             const pointsR2 = statsR2?.learning_curve ?? [];
             const teamsWithSeqR1 = new Set<string>(pointsR1.map((p: any) => String(p.team_id)));
             const teamsWithSeqR2 = new Set<string>(pointsR2.map((p: any) => String(p.team_id)));
+
             const seriesDisplayName = (rawKey: string) => {
               const isR1 = rawKey.startsWith('r1-');
               const isR2 = rawKey.startsWith('r2-');
@@ -988,12 +1026,13 @@ const Instructor: React.FC = () => {
             };
             const labelSeriesKeys = (() => {
               if (!isExpanded) return [] as string[];
-              if (sequenceTab !== 'BOTH') return visibleTeamIds.map(tid => String(tid));
+              if (sequenceTab !== 'BOTH') return teamIds.map(tid => String(tid));
               // Smart: if lots of teams, label only R2 to keep it readable.
-              return visibleTeamIds.length > 8
-                ? visibleTeamIds.map(tid => `r2-${tid}`)
-                : visibleTeamIds.flatMap(tid => [`r1-${tid}`, `r2-${tid}`]);
+              return teamIds.length > 8
+                ? teamIds.map(tid => `r2-${tid}`)
+                : teamIds.flatMap(tid => [`r1-${tid}`, `r2-${tid}`]);
             })();
+
             const lastIndexBySeriesKey: Record<string, number> = {};
             if (isExpanded) {
               for (const k of labelSeriesKeys) {
@@ -1007,6 +1046,7 @@ const Instructor: React.FC = () => {
                 }
               }
             }
+
             // If multiple series end at the same y-value, offset their labels so they don't overlap.
             const labelYOffsetBySeriesKey: Record<string, number> = {};
             if (isExpanded) {
@@ -1051,9 +1091,10 @@ const Instructor: React.FC = () => {
                 });
               }
             }
+
             const makeEndLabel = (seriesKey: string, labelText: string, color: string) => (p: any) => {
               if (!isExpanded) return null;
-              if (p?.index !== lastIndexBySeriesKey[seriesKey]) return null;
+              if (p?.seq !== lastIndexBySeriesKey[seriesKey]) return null;
               const x = Number(p?.x);
               const y = Number(p?.y);
               if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
@@ -1129,7 +1170,7 @@ const Instructor: React.FC = () => {
                     // Add headroom without changing the axis max label (keep max at 5).
                     domain={[0, 5]}
                      padding={{ top: 12, bottom: 6 }}
-                     label={{ value: 'Avg Quality', angle: -90, position: 'insideLeft', dx: -10 }}
+                     label={{ value: 'Avg Score', angle: -90, position: 'insideLeft', dx: -10 }}
                    />
                    <Tooltip
                      shared={false}
@@ -1164,7 +1205,7 @@ const Instructor: React.FC = () => {
                            {roundLabel && <div className="text-xs font-bold text-gray-500">{roundLabel}</div>}
                            <div className="mt-1 text-sm text-gray-700">
                              <div className="flex justify-between gap-4">
-                               <span className="font-medium">Avg Quality</span>
+                               <span className="font-medium">Avg Score</span>
                                <span className="font-mono font-bold text-indigo-700">
                                  {Number.isFinite(quality) ? quality.toFixed(1) : '—'}
                                </span>
@@ -1177,7 +1218,7 @@ const Instructor: React.FC = () => {
                    {sequenceTab === 'BOTH' ? (
                      <>
                        {sortSeriesKeysForRender(
-                         visibleTeamIds.filter(tid => teamsWithSeqR1.has(String(tid))).map(tid => `r1-${tid}`)
+                         teamIds.filter(tid => teamsWithSeqR1.has(String(tid))).map(tid => `r1-${tid}`)
                        ).map((seriesKey) => {
                          const teamId = seriesKey.slice(3);
                          const color = colorForTeamId(teamId);
@@ -1206,7 +1247,7 @@ const Instructor: React.FC = () => {
                          );
                        })}
                        {sortSeriesKeysForRender(
-                         visibleTeamIds.filter(tid => teamsWithSeqR2.has(String(tid))).map(tid => `r2-${tid}`)
+                         teamIds.filter(tid => teamsWithSeqR2.has(String(tid))).map(tid => `r2-${tid}`)
                        ).map((seriesKey) => {
                          const teamId = seriesKey.slice(3);
                          const color = colorForTeamId(teamId);
@@ -1238,10 +1279,10 @@ const Instructor: React.FC = () => {
                      <>
                    {sortSeriesKeysForRender(
                       (sequenceTab === 'R1'
-                        ? visibleTeamIds.filter(tid => teamsWithSeqR1.has(String(tid)))
+                        ? teamIds.filter(tid => teamsWithSeqR1.has(String(tid)))
                         : sequenceTab === 'R2'
-                          ? visibleTeamIds.filter(tid => teamsWithSeqR2.has(String(tid)))
-                          : visibleTeamIds
+                          ? teamIds.filter(tid => teamsWithSeqR2.has(String(tid)))
+                          : teamIds
                       ).map(tid => String(tid))
                     ).map((teamId) => {
                       const color = colorForTeamId(teamId);
@@ -1305,7 +1346,7 @@ const Instructor: React.FC = () => {
                   // Reset leaderboard UI state (data is cleared in resetGame()).
                   leaderboardRoundTouchedRef.current = false;
                   setLeaderboardRoundTab(1);
-                  setLeaderboardSortKey('total_sales');
+                  setLeaderboardSortKey('profit');
                   setLeaderboardSortDir('desc');
                   setRankUpTeamIds([]);
                   prevLeaderboardPosRef.current = null;
@@ -1324,6 +1365,33 @@ const Instructor: React.FC = () => {
             </div>
           </div>
         </Modal>
+
+        {/* End Round 1 Confirm Modal */}
+        <Modal
+          isOpen={showEndRound1Confirm}
+          onClose={() => setShowEndRound1Confirm(false)}
+          title="End Round 1"
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-gray-700">
+              End Round 1 now? This will advance the game to Round 2.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="secondary" onClick={() => setShowEndRound1Confirm(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  setShowEndRound1Confirm(false);
+                  endRound();
+                }}
+              >
+                Yes
+              </Button>
+            </div>
+          </div>
+        </Modal>
         
         {/* Expanded Chart Modal */}
         <Modal 
@@ -1336,8 +1404,6 @@ const Instructor: React.FC = () => {
                   ? 'Cumulative Sales Over Time'
                   : expandedChart === 'sequence_quality'
                     ? 'Batch Sequence vs Quality'
-                    : expandedChart === 'size_quality'
-                      ? 'Batch Size vs Quality'
                       : 'Expanded'
             }
             maxWidth="max-w-[90vw]"
@@ -1373,7 +1439,23 @@ const Instructor: React.FC = () => {
             ) : (
             <div className="h-[75vh] w-full flex flex-col">
               {(expandedChart === 'sales' || expandedChart === 'sequence_quality') && (
-                <div className="mb-3 flex justify-end pr-6">
+                <div className="mb-3 flex justify-end items-center gap-4 pr-6">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Team Filter:</span>
+                    <select
+                      value={expandedChart === 'sales' ? salesTeamFilter : sequenceTeamFilter}
+                      onChange={(e) => {
+                        if (expandedChart === 'sales') setSalesTeamFilter(e.target.value);
+                        else setSequenceTeamFilter(e.target.value);
+                      }}
+                      className="rounded border border-gray-200 bg-white px-2 py-1 text-xs font-bold text-gray-700 hover:border-gray-300 focus:outline-none"
+                    >
+                      <option value="ALL">All Teams</option>
+                      {visibleTeamIds.map(tid => (
+                        <option key={tid} value={tid}>{teamNames[tid] || `Team ${tid}`}</option>
+                      ))}
+                    </select>
+                  </div>
                   <div className="flex items-center rounded-md border border-gray-200 bg-white p-0.5">
                     {(['R1', 'R2', 'BOTH'] as const).map(k => (
                       <button
@@ -1382,12 +1464,12 @@ const Instructor: React.FC = () => {
                         onClick={() => (expandedChart === 'sales' ? setSalesTab(k) : setSequenceTab(k))}
                         className={`px-3 py-1.5 rounded text-sm font-bold ${
                           (expandedChart === 'sales' ? salesTab : sequenceTab) === k
-                            ? 'bg-gray-900 text-white'
+                            ? 'bg-gray-900 text-white shadow-sm'
                             : 'text-gray-600 hover:bg-gray-100'
                         }`}
                         title={k === 'BOTH' ? 'Compare both rounds' : (k === 'R1' ? 'Round 1' : 'Round 2')}
                       >
-                        {k === 'R1' ? 'Round 1' : k === 'R2' ? 'Round 2' : 'Both'}
+                        {k === 'R1' ? 'Round 1' : k === 'R2' ? 'Round 2' : 'Compare Rounds'}
                       </button>
                     ))}
                   </div>
@@ -1448,7 +1530,7 @@ const Instructor: React.FC = () => {
         )}
 
         {/* Top Controls Bar */}
-        <Card className="border-t-4 border-t-slate-800">
+        <Card>
           <div className="flex flex-col space-y-4">
             {/* Row 1: Game Flow */}
             <div className="flex flex-wrap justify-between items-center gap-4">
@@ -1487,7 +1569,7 @@ const Instructor: React.FC = () => {
                      variant="success"
                    className="w-32 flex justify-center items-center gap-2"
                  >
-                     <Play size={16} /> Start
+                     <Play size={16} /> {shouldShowRound2Resume ? 'Resume' : 'Start'}
                  </Button>
                  ) : (
                    <Button
@@ -1501,7 +1583,15 @@ const Instructor: React.FC = () => {
                  )}
                  
                  <Button 
-                   onClick={() => endRound()}
+                  onClick={async () => {
+                    if (config.round === 1) {
+                      setShowEndRound1Confirm(true);
+                      return;
+                    }
+                    // Round 2 end => immediately show "Resume" (backend supports resuming Round 2).
+                    if (config.round === 2) setRound2ResumeHint(true);
+                    await endRound();
+                  }}
                    disabled={!config.isActive}
                    variant="danger"
                    className="bg-red-500 text-white hover:bg-red-600 disabled:opacity-50 disabled:bg-gray-400 disabled:cursor-not-allowed"
@@ -1533,7 +1623,7 @@ const Instructor: React.FC = () => {
             )}
             
             {/* Row 3: Configurations */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
                <div className="flex items-center space-x-2">
                  <Settings size={16} className="text-gray-400" />
                  <span className="text-sm font-bold text-gray-700 uppercase">Config:</span>
@@ -1548,7 +1638,7 @@ const Instructor: React.FC = () => {
                    className={`w-16 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditBatchSize ? 'opacity-50 cursor-not-allowed' : ''}`}
                  />
                </div>
-               <div className="flex items-center gap-2">
+               <div className="flex items-center space-x-2">
                  <label className="text-sm text-gray-600">Cust. Budget:</label>
                  <input 
                    type="number" 
@@ -1557,13 +1647,25 @@ const Instructor: React.FC = () => {
                    disabled={!canEditBudget}
                    className={`w-16 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditBudget ? 'opacity-50 cursor-not-allowed' : ''}`}
                  />
+               </div>
+               <div className="flex items-center gap-2">
+                 <label className="text-sm text-gray-600">Unsold Joke Penalty:</label>
+                 <input
+                   type="number"
+                   step="0.1"
+                   min="0"
+                   value={localUnsoldJokePenalty}
+                   onChange={e => setLocalUnsoldJokePenalty(Number(e.target.value))}
+                   disabled={!canEditUnsoldJokePenalty}
+                   className={`w-20 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditUnsoldJokePenalty ? 'opacity-50 cursor-not-allowed' : ''}`}
+                 />
                  <Button
                    type="button"
                    onClick={handleUpdateSettings}
                    variant="secondary"
                    disabled={!hasPendingConfigChanges}
                    className={
-                     `ml-5 px-4 py-1 text-xs font-semibold transition-colors ` +
+                     `ml-2 px-4 py-1 text-xs font-semibold transition-colors ` +
                      (hasPendingConfigChanges
                        ? 'bg-amber-100 text-amber-900 hover:bg-amber-200 ring-2 ring-amber-200'
                        : 'opacity-60')
@@ -1798,12 +1900,22 @@ const Instructor: React.FC = () => {
             {renderLeaderboardTable({ maxHeightClass: 'max-h-80' })}
           </Card>
           
-          {/* 2) Cumulative Sales Over Time */}
           {!isChartHidden('sales') && (
             <Card
               title="Cumulative Sales Over Time"
               action={
                 <div className="flex items-center gap-2">
+                  <select
+                    value={salesTeamFilter}
+                    onChange={(e) => setSalesTeamFilter(e.target.value)}
+                    className="rounded border border-gray-200 bg-white px-2 py-1 text-xs font-bold text-gray-700 hover:border-gray-300 focus:outline-none"
+                    title="Filter by Team"
+                  >
+                    <option value="ALL">All Teams</option>
+                    {visibleTeamIds.map(tid => (
+                      <option key={tid} value={tid}>{teamNames[tid] || `Team ${tid}`}</option>
+                    ))}
+                  </select>
                   <div className="flex items-center rounded-md border border-gray-200 bg-white p-0.5">
                     {(['R1', 'R2', 'BOTH'] as const).map(k => (
                       <button
@@ -1848,6 +1960,17 @@ const Instructor: React.FC = () => {
               title="Batch Sequence vs Quality"
               action={
                 <div className="flex items-center gap-2">
+                  <select
+                    value={sequenceTeamFilter}
+                    onChange={(e) => setSequenceTeamFilter(e.target.value)}
+                    className="rounded border border-gray-200 bg-white px-2 py-1 text-xs font-bold text-gray-700 hover:border-gray-300 focus:outline-none"
+                    title="Filter by Team"
+                  >
+                    <option value="ALL">All Teams</option>
+                    {visibleTeamIds.map(tid => (
+                      <option key={tid} value={tid}>{teamNames[tid] || `Team ${tid}`}</option>
+                    ))}
+                  </select>
                   <div className="flex items-center rounded-md border border-gray-200 bg-white p-0.5">
                     {(['R1', 'R2', 'BOTH'] as const).map(k => (
                       <button
@@ -1886,34 +2009,84 @@ const Instructor: React.FC = () => {
             </Card>
           )}
 
-          {/* 4) Batch Size vs Average Quality */}
-          {!isChartHidden('size_quality') && (
-            <Card
-              title="Batch Size vs Average Quality"
-              action={
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setExpandedChart('size_quality')}
-                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
-                    title="Expand chart"
-                  >
-                    <Maximize2 size={18} />
-                  </button>
-                  <button
-                    onClick={() => hideChart('size_quality')}
-                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600"
-                    title="Hide chart (this session only)"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-              }
-            >
-              <div className="h-72 w-full">
-                {renderChart('size_quality')}
-              </div>
-            </Card>
-          )}
+          {/* Live Market (Instructor view) */}
+          <Card title="Live Market" className="xl:col-span-2">
+            <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
+              <table className="min-w-full text-sm table-fixed">
+                <thead className="sticky top-0 bg-white shadow-sm z-10">
+                  <tr className="bg-gray-50 border-b">
+                    <th className="px-3 py-2 text-left font-medium text-gray-500 w-[72%]">Joke</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-500 w-[14%]">Team</th>
+                    <th className="px-3 py-2 text-right font-medium text-gray-500 w-[14%]">
+                      <button
+                        type="button"
+                        onClick={() => setMarketSortDir(d => (d === 'desc' ? 'asc' : 'desc'))}
+                        className="inline-flex items-center justify-end w-full hover:text-gray-800"
+                        title="Sort by total sales (purchase count)"
+                      >
+                        <span>Total Sales</span>
+                        <span className="ml-1 w-3 text-center">
+                          {marketSortDir === 'desc' ? '▼' : '▲'}
+                        </span>
+                      </button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {(() => {
+                    const rows = (marketItems ?? []).map(it => ({
+                      joke_id: Number((it as any).joke_id),
+                      joke_text: String((it as any).joke_text ?? ''),
+                      team_id: Number((it as any).team?.id ?? 0),
+                      team_name: String((it as any).team?.name ?? ''),
+                      bought_count: Number((it as any).bought_count ?? (it as any).boughtCount ?? 0),
+                    }));
+                    rows.sort((a, b) => (marketSortDir === 'asc' ? 1 : -1) * (a.bought_count - b.bought_count));
+                    if (rows.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={3} className="px-3 py-6 text-center text-gray-400 italic">
+                            Market is empty.
+                          </td>
+                        </tr>
+                      );
+                    }
+                    return rows.map(r => {
+                      const id = String(r.joke_id);
+                      const isExpanded = Boolean(expandedMarketJokeIds[id]);
+                      const isLong = r.joke_text.trim().length > 180;
+                      return (
+                        <tr key={id} className="hover:bg-gray-50">
+                          <td className="px-3 py-2 text-gray-900">
+                            <div className={`whitespace-pre-wrap ${isExpanded ? '' : 'line-clamp-3'}`}>
+                              {r.joke_text}
+                            </div>
+                            {isLong && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedMarketJokeIds(prev => ({ ...prev, [id]: !Boolean(prev[id]) }))
+                                }
+                                className="mt-1 text-xs font-bold text-blue-600 underline hover:text-blue-700"
+                              >
+                                {isExpanded ? 'Show less' : 'Show more'}
+                              </button>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-gray-800 whitespace-nowrap truncate">
+                            {r.team_name ? r.team_name : `Team ${r.team_id || ''}`}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-gray-900">
+                            {r.bought_count}
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          </Card>
 
         </div>
       </div>

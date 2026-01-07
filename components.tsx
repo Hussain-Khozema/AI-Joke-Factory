@@ -34,10 +34,17 @@ export const Card: React.FC<{ children: React.ReactNode; className?: string; tit
   </div>
 );
 
-export const StatBox: React.FC<{ label: string; value: string | number; color?: string }> = ({ label, value, color = 'bg-blue-50 text-blue-700' }) => (
-  <div className={`p-4 rounded-lg flex flex-col items-center justify-center ${color}`}>
-    <span className="text-3xl font-bold">{value}</span>
-    <span className="text-sm uppercase tracking-wide opacity-80 mt-1">{label}</span>
+export const StatBox: React.FC<{
+  label: string;
+  value: string | number;
+  color?: string;
+  className?: string;
+  valueClassName?: string;
+  labelClassName?: string;
+}> = ({ label, value, color = 'bg-blue-50 text-blue-700', className = '', valueClassName = '', labelClassName = '' }) => (
+  <div className={`p-4 rounded-lg flex flex-col items-center justify-center ${color} ${className}`}>
+    <span className={`text-3xl font-bold ${valueClassName}`}>{value}</span>
+    <span className={`text-sm uppercase tracking-wide opacity-80 mt-1 ${labelClassName}`}>{label}</span>
   </div>
 );
 

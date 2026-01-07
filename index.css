@@ -29,4 +29,13 @@
   animation: jf-rank-up-flash 1400ms ease-out;
 }
 
+/* Light outline for colored text (improves contrast on light backgrounds). */
+.jf-text-outline {
+  text-shadow:
+    -1px -1px 0 rgba(255, 255, 255, 0.95),
+    1px -1px 0 rgba(255, 255, 255, 0.95),
+    -1px 1px 0 rgba(255, 255, 255, 0.95),
+    1px 1px 0 rgba(255, 255, 255, 0.95);
+}
+
 

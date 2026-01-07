@@ -1,10 +1,47 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useGame } from '../context';
 import { Button, Card, RoleLayout } from '../components';
 import { ShoppingBag, RotateCcw, DollarSign } from 'lucide-react';
 
+const performanceBadge = (raw: unknown): { label: string; className: string } => {
+  const key = String(raw ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s_]+/g, '_');
+
+  // Backend variants: HIGH_PERFORMING / HIGH PERFORMING, AVG/AVERAGE, LOW_PERFORMING, etc.
+  if (key === 'HIGH_PERFORMING' || key === 'HIGH') {
+    return {
+      label: 'High Demand',
+      className: 'bg-gradient-to-r from-emerald-50 to-emerald-100 text-emerald-900 ring-1 ring-emerald-200',
+    };
+  }
+  if (
+    key === 'AVERAGE_PERFORMING' ||
+    key === 'AVG_PERFORMING' ||
+    key === 'AVERAGE' ||
+    key === 'AVG'
+  ) {
+    return {
+      label: 'Standard',
+      className: 'bg-gradient-to-r from-slate-50 to-slate-100 text-slate-900 ring-1 ring-slate-200',
+    };
+  }
+  if (key === 'LOW_PERFORMING' || key === 'LOW') {
+    return {
+      label: 'Low Selectivity',
+      className: 'bg-gradient-to-r from-rose-50 to-rose-100 text-rose-900 ring-1 ring-rose-200',
+    };
+  }
+  return {
+    label: 'Standard',
+    className: 'bg-gradient-to-r from-slate-50 to-slate-100 text-slate-900 ring-1 ring-slate-200',
+  };
+};
+
 const Customer: React.FC = () => {
   const { user, buyJoke, returnJoke, config, marketItems } = useGame();
+  const [expandedJokeIds, setExpandedJokeIds] = useState<Record<string, boolean>>({});
   
   if (!user) return null;
 
@@ -12,7 +49,8 @@ const Customer: React.FC = () => {
   const marketJokes = marketItems.map(item => ({
     id: String(item.joke_id),
     content: item.joke_text,
-    team: String(item.team.id),
+    teamName: item.team?.name ? String(item.team.name) : `Team ${String(item.team?.id ?? '')}`,
+    teamPerfLabel: (item.team as any)?.performance_label ?? null,
     batchId: String(item.joke_id), // placeholder to preserve UI (API does not include batch_id)
     isBoughtByMe: item.is_bought_by_me,
   }));
@@ -20,6 +58,8 @@ const Customer: React.FC = () => {
   const purchasedSet = new Set(user.purchasedJokes);
 
   const handleBuy = (jokeId: string) => {
+    // Purchase => fold (collapse) all expanded jokes immediately.
+    setExpandedJokeIds({});
     buyJoke(jokeId, 1);
   };
 
@@ -80,17 +120,45 @@ const Customer: React.FC = () => {
              ) : (
                marketJokes.map(joke => {
                  const isOwned = purchasedSet.has(joke.id);
+                 const isExpanded = Boolean(expandedJokeIds[joke.id]);
+                 const isLongJoke = joke.content.trim().length > 180;
+                 const perf = performanceBadge(joke.teamPerfLabel);
+                 const teamBadgeText = `${joke.teamName} – ${perf.label}`;
                  return (
                    <Card key={joke.id} className="transition hover:shadow-md">
                      <div className="flex justify-between items-start h-full">
                        <div className="flex-1 pr-4 min-w-0">
                          <div className="flex items-center space-x-2 mb-2">
-                           <span className="bg-blue-100 text-blue-800 text-xs font-bold px-2 py-0.5 rounded uppercase">
-                             {joke.team}
+                           <span
+                             className={
+                               `inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-extrabold tracking-wide ` +
+                               `shadow-sm ${perf.className}`
+                             }
+                             title={String(joke.teamPerfLabel ?? '')}
+                           >
+                             {teamBadgeText}
                            </span>
                          </div>
-                         <div className="h-32 overflow-y-auto pr-2">
-                             <p className="text-lg text-gray-800 font-medium leading-relaxed">"{joke.content}"</p>
+                         <div className="pr-2">
+                           <p
+                             className={
+                               `text-lg text-gray-800 font-medium leading-relaxed whitespace-pre-wrap ` +
+                               (isExpanded ? '' : 'line-clamp-3')
+                             }
+                           >
+                             "{joke.content}"
+                           </p>
+                           {isLongJoke && (
+                             <button
+                               type="button"
+                               onClick={() =>
+                                 setExpandedJokeIds(prev => ({ ...prev, [joke.id]: !Boolean(prev[joke.id]) }))
+                               }
+                               className="mt-2 text-sm font-bold text-blue-600 underline hover:text-blue-700"
+                             >
+                               {isExpanded ? 'Read Less' : 'Read More'}
+                             </button>
+                           )}
                          </div>
                        </div>
                        

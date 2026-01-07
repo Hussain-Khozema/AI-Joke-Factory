@@ -119,8 +119,8 @@ npm run dev
 3) Join:
 - **Students**: use **Student Pair Login** (any names)
 - **Instructor**: use one of these names:
-  - `Charles`
-  - `Fernanda`
+  - `Charles2026`
+  - `Fernanda2026`
 
 Notes:
 - Mock state is stored in `localStorage` under `joke_factory_mock_db_v1`.

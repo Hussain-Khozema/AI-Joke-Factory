@@ -4,6 +4,23 @@ import { Button, Card, StatBox, RoleLayout, Modal } from '../components';
 import { Star, CheckCircle, Clock, Tag, AlertTriangle } from 'lucide-react';
 import { Batch } from '../types';
 
+const performanceTagUi = (raw: unknown): { text: string; boxColor: string } => {
+  const key = String(raw ?? '')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s_]+/g, '_');
+  if (key === 'HIGH_PERFORMING' || key === 'HIGH') {
+    return { text: 'High Demand', boxColor: 'bg-emerald-50 text-emerald-800' };
+  }
+  if (key === 'AVG' || key === 'AVERAGE' || key === 'AVG_PERFORMING' || key === 'AVERAGE_PERFORMING') {
+    return { text: 'Moderate Demand', boxColor: 'bg-amber-50 text-amber-800' };
+  }
+  if (key === 'LOW_PERFORMING' || key === 'LOW') {
+    return { text: 'High Leftover', boxColor: 'bg-red-50 text-red-800' };
+  }
+  return { text: '-', boxColor: 'bg-slate-50 text-slate-700' };
+};
+
 const TAG_OPTIONS = [
   { label: "Excellent / standout", tooltip: "Memorable, high-quality, clearly above average." },
   { label: "Genuinely funny", tooltip: "Would repeat to friends or classmates." },
@@ -48,15 +65,33 @@ const QualityControl: React.FC = () => {
   const activeBatch = pendingBatches.find(b => b.id === activeBatchId) || pendingBatches[0];
 
   // Stats (rated history + live summary)
-  const summary = teamSummary ?? { rank: null, points: null, avg_score_overall: null };
   const totalAccepted = completedBatches.reduce((sum, b) => sum + (b.acceptedCount || 0), 0);
-  const avgScore = summary.avg_score_overall !== null
-    ? summary.avg_score_overall.toFixed(1)
-    : (completedBatches.length > 0 
-      ? (completedBatches.reduce((sum, b) => sum + (b.avgRating || 0), 0) / completedBatches.length).toFixed(1) 
-      : 'N/A');
-  const totalPoints = summary.points ?? totalAccepted * 1; 
-  const myRank = summary.rank !== null ? String(summary.rank) : '-';
+  const avgScore =
+    typeof (teamSummary as any)?.avg_score_overall === 'number' && Number.isFinite((teamSummary as any).avg_score_overall)
+      ? Number((teamSummary as any).avg_score_overall).toFixed(1)
+      : (completedBatches.length > 0
+        ? (completedBatches.reduce((sum, b) => sum + (b.avgRating || 0), 0) / completedBatches.length).toFixed(1)
+        : 'N/A');
+  const myRank = typeof (teamSummary as any)?.rank === 'number' ? String((teamSummary as any).rank) : '-';
+  const perfTag = performanceTagUi((teamSummary as any)?.performance_label);
+  const totalSales = typeof (teamSummary as any)?.total_sales === 'number' ? Number((teamSummary as any).total_sales) : 0;
+  const profitNum = typeof (teamSummary as any)?.profit === 'number' ? Number((teamSummary as any).profit) : null;
+  const profit =
+    profitNum !== null && Number.isFinite(profitNum)
+      ? `$${profitNum.toFixed(2)}`
+      : '—';
+  const profitValueColor =
+    profitNum !== null && Number.isFinite(profitNum)
+      ? (profitNum > 0 ? 'text-emerald-700' : profitNum < 0 ? 'text-red-700' : 'text-slate-700')
+      : 'text-slate-700';
+  const profitBoxColor =
+    profitNum !== null && Number.isFinite(profitNum)
+      ? (profitNum > 0
+        ? 'bg-emerald-50 text-emerald-800'
+        : profitNum < 0
+          ? 'bg-red-50 text-red-800'
+          : 'bg-slate-50 text-slate-700')
+      : 'bg-slate-50 text-slate-700';
 
   const handleRate = (jokeId: string, rating: number) => {
     setCurrentRatings(prev => ({ ...prev, [jokeId]: rating }));
@@ -133,7 +168,7 @@ const QualityControl: React.FC = () => {
                  <div className="space-y-6">
                    {activeBatch.jokes.map((joke) => (
                      <div key={joke.id} className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                       <p className="mb-3 text-gray-800 font-medium text-lg">{joke.content}</p>
+                       <p className="mb-3 text-gray-800 font-medium text-lg whitespace-pre-wrap">{joke.content}</p>
                        
                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                            {/* Rating Section */}
@@ -227,9 +262,22 @@ const QualityControl: React.FC = () => {
         <div className="space-y-6">
           <div className="grid grid-cols-2 gap-4">
             <StatBox label="Current Rank" value={myRank} color="bg-green-100 text-green-900 border-2 border-green-400 shadow-md" />
+            <StatBox
+              label="Performance Tag"
+              value={perfTag.text}
+              color={perfTag.boxColor}
+              valueClassName="text-xl jf-text-outline"
+              labelClassName="text-xs"
+            />
+            <StatBox label="Avg Score" value={avgScore} color="bg-indigo-50 text-indigo-700" />
             <StatBox label="Queue" value={qcQueue?.queue_size ?? pendingBatches.length} color="bg-purple-50 text-purple-700" />
-            <StatBox label="Avg Quality" value={avgScore} color="bg-indigo-50 text-indigo-700" />
-            <StatBox label="Total Sales" value={totalPoints} color="bg-amber-50 text-amber-700" />
+            <StatBox label="Total Sales" value={totalSales} color="bg-amber-50 text-amber-700" />
+            <StatBox
+              label="Profit"
+              value={profit}
+              color={profitBoxColor}
+              valueClassName={profitValueColor}
+            />
           </div>
 
           <Card title="Incoming Queue">

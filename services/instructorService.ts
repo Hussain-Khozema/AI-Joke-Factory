@@ -51,7 +51,10 @@ export const instructorService = {
     return apiRequest<ApiInstructorRoundConfigResponse>(`/v1/instructor/rounds/${round_id}/popups`, { method: 'POST', body });
   },
 
-  start(round_id: RoundId, body: { customer_budget: number; batch_size: number }): Promise<void> {
+  start(
+    round_id: RoundId,
+    body: { customer_budget: number; batch_size: number; unsold_jokes_penalty: number },
+  ): Promise<void> {
     return apiRequest<void>(`/v1/instructor/rounds/${round_id}/start`, { method: 'POST', body });
   },
 
