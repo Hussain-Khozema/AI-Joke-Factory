@@ -60,6 +60,7 @@ const Instructor: React.FC = () => {
   const [rankUpTeamIds, setRankUpTeamIds] = useState<string[]>([]);
   const prevLeaderboardPosRef = useRef<Record<string, number> | null>(null);
   const rankUpTimersRef = useRef<Record<string, number>>({});
+  const [marketSortKey, setMarketSortKey] = useState<'id' | 'sales'>('id');
   const [marketSortDir, setMarketSortDir] = useState<'asc' | 'desc'>('desc');
   const [expandedMarketJokeIds, setExpandedMarketJokeIds] = useState<Record<string, boolean>>({});
   const [round2ResumeHint, setRound2ResumeHint] = useState(false);
@@ -2019,18 +2020,43 @@ const Instructor: React.FC = () => {
               <table className="min-w-full text-sm table-fixed">
                 <thead className="sticky top-0 bg-white shadow-sm z-10">
                   <tr className="bg-gray-50 border-b">
-                    <th className="px-3 py-2 text-left font-medium text-gray-500 w-[72%]">Joke</th>
+                    <th className="px-3 py-2 text-left font-medium text-gray-500 w-[72%]">
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          if (marketSortKey === 'id') {
+                            setMarketSortDir(d => (d === 'desc' ? 'asc' : 'desc'));
+                          } else {
+                            setMarketSortKey('id');
+                            setMarketSortDir('desc');
+                          }
+                        }}
+                        className="inline-flex items-center hover:text-gray-800"
+                      >
+                        Joke
+                        {marketSortKey === 'id' && (
+                          <span className="ml-1">{marketSortDir === 'desc' ? '▼' : '▲'}</span>
+                        )}
+                      </button>
+                    </th>
                     <th className="px-3 py-2 text-left font-medium text-gray-500 w-[14%]">Team</th>
                     <th className="px-3 py-2 text-right font-medium text-gray-500 w-[14%]">
                       <button
                         type="button"
-                        onClick={() => setMarketSortDir(d => (d === 'desc' ? 'asc' : 'desc'))}
+                        onClick={() => {
+                          if (marketSortKey === 'sales') {
+                            setMarketSortDir(d => (d === 'desc' ? 'asc' : 'desc'));
+                          } else {
+                            setMarketSortKey('sales');
+                            setMarketSortDir('desc');
+                          }
+                        }}
                         className="inline-flex items-center justify-end w-full hover:text-gray-800"
                         title="Sort by total sales (purchase count)"
                       >
                         <span>Total Sales</span>
                         <span className="ml-1 w-3 text-center">
-                          {marketSortDir === 'desc' ? '▼' : '▲'}
+                          {marketSortKey === 'sales' ? (marketSortDir === 'desc' ? '▼' : '▲') : ''}
                         </span>
                       </button>
                     </th>
@@ -2044,8 +2070,23 @@ const Instructor: React.FC = () => {
                       team_id: Number((it as any).team?.id ?? 0),
                       team_name: String((it as any).team?.name ?? ''),
                       bought_count: Number((it as any).bought_count ?? (it as any).boughtCount ?? 0),
+                      sold_jokes_count: Number((it as any).team?.sold_jokes_count ?? 0),
+                      accepted_jokes: Number((it as any).team?.accepted_jokes ?? 0),
                     }));
-                    rows.sort((a, b) => (marketSortDir === 'asc' ? 1 : -1) * (a.bought_count - b.bought_count));
+
+                    rows.sort((a, b) => {
+                      const dir = marketSortDir === 'asc' ? 1 : -1;
+                      if (marketSortKey === 'sales') {
+                        // Secondary sort by ID desc if sales are equal
+                        if (a.bought_count === b.bought_count) {
+                            return b.joke_id - a.joke_id;
+                        }
+                        return dir * (a.bought_count - b.bought_count);
+                      }
+                      // Default sort by ID (Newest = desc)
+                      return dir * (a.joke_id - b.joke_id);
+                    });
+
                     if (rows.length === 0) {
                       return (
                         <tr>
@@ -2077,10 +2118,15 @@ const Instructor: React.FC = () => {
                               </button>
                             )}
                           </td>
-                          <td className="px-3 py-2 text-gray-800 whitespace-nowrap truncate">
-                            {r.team_name ? r.team_name : `Team ${r.team_id || ''}`}
+                          <td className="px-3 py-2 text-gray-800 whitespace-nowrap truncate align-top">
+                            <div>
+                              {r.team_name ? r.team_name : `Team ${r.team_id || ''}`}
+                            </div>
+                            <div className="text-xs text-gray-400 mt-0.5" title="Team Stats: Sold / Accepted">
+                              Sold: {r.sold_jokes_count}/{r.accepted_jokes}
+                            </div>
                           </td>
-                          <td className="px-3 py-2 text-right font-mono text-gray-900">
+                          <td className="px-3 py-2 text-right font-mono text-gray-900 align-top">
                             {r.bought_count}
                           </td>
                         </tr>

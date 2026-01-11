@@ -48,6 +48,8 @@ const Customer: React.FC = () => {
     content: item.joke_text,
     teamName: item.team?.name ? String(item.team.name) : `Team ${String(item.team?.id ?? '')}`,
     teamPerfLabel: (item.team as any)?.performance_label ?? null,
+    soldCount: Number((item.team as any)?.sold_jokes_count ?? 0),
+    acceptedCount: Number((item.team as any)?.accepted_jokes ?? 0),
     batchId: String(item.joke_id), // placeholder to preserve UI (API does not include batch_id)
     isBoughtByMe: item.is_bought_by_me,
   }));
@@ -105,7 +107,7 @@ const Customer: React.FC = () => {
         <div className="md:col-span-3">
            <div className="mb-6">
              <h1 className="text-2xl font-bold text-gray-800">Joke Market</h1>
-             <p className="text-gray-600">Premium quality jokes, verified by QA experts.</p>
+             <p className="text-gray-600">Buy what makes you laugh. You can always return it.</p>
            </div>
            
            <div className="grid grid-cols-1 gap-4">
@@ -119,7 +121,7 @@ const Customer: React.FC = () => {
                  const isOwned = purchasedSet.has(joke.id);
                  const isExpanded = Boolean(expandedJokeIds[joke.id]);
                  const isLongJoke = joke.content.trim().length > 180;
-                 const perf = performanceBadge(joke.teamPerfLabel);
+                 const perf = joke.soldCount > 0 ? performanceBadge(joke.teamPerfLabel) : null;
                  const teamBadgeText = perf ? `${joke.teamName} – ${perf.label}` : joke.teamName;
                  return (
                    <Card key={joke.id} className="transition hover:shadow-md">
@@ -134,6 +136,9 @@ const Customer: React.FC = () => {
                              title={String(joke.teamPerfLabel ?? '')}
                            >
                              {teamBadgeText}
+                           </span>
+                           <span className="text-xs text-gray-500 font-medium" title="Team's sold jokes / published jokes">
+                             {joke.soldCount} sold of {joke.acceptedCount} published
                            </span>
                          </div>
                          <div className="pr-2">
@@ -161,8 +166,8 @@ const Customer: React.FC = () => {
                        
                        <div className="shrink-0 ml-4">
                          {isOwned ? (
-                           <Button 
-                             onClick={() => handleReturn(joke.id)} 
+                           <Button
+                             onClick={() => handleReturn(joke.id)}
                              variant="secondary"
                              className="flex items-center space-x-2 text-red-600 border border-gray-200"
                            >
@@ -170,8 +175,8 @@ const Customer: React.FC = () => {
                              <span>Return ($1)</span>
                            </Button>
                          ) : (
-                           <Button 
-                             onClick={() => handleBuy(joke.id)} 
+                           <Button
+                             onClick={() => handleBuy(joke.id)}
                              disabled={user.wallet <= 0 || !config.isActive}
                              className="flex items-center space-x-2 w-32 justify-center"
                            >

@@ -1144,17 +1144,17 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               const now = Date.now();
               if (now >= qcNextRetryAfterRef.current) {
                 try {
-                  const rawQ = await qcService.queueNext(effectiveRound);
-                  const qAny: any = rawQ;
-                  const qData = (qAny?.data ?? qAny) as any;
-                  normalizedQueue = qData
-                    ? {
-                        batch: qData.batch,
-                        jokes: Array.isArray(qData.jokes) ? qData.jokes : [],
-                        queue_size: qData.queue_size ?? size,
-                      }
-                    : null;
-                  if (!cancelled) setQcQueue(normalizedQueue);
+              const rawQ = await qcService.queueNext(effectiveRound);
+              const qAny: any = rawQ;
+              const qData = (qAny?.data ?? qAny) as any;
+              normalizedQueue = qData
+                ? {
+                    batch: qData.batch,
+                    jokes: Array.isArray(qData.jokes) ? qData.jokes : [],
+                    queue_size: qData.queue_size ?? size,
+                  }
+                : null;
+              if (!cancelled) setQcQueue(normalizedQueue);
                   qcNextRetryAfterRef.current = 0; // success, clear backoff
                 } catch (e) {
                   // If queue/next 404s despite count > 0, it usually means the batch 

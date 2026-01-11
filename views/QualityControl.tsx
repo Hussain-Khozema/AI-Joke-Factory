@@ -69,9 +69,9 @@ const QualityControl: React.FC = () => {
   const avgScore =
     typeof (teamSummary as any)?.avg_score_overall === 'number' && Number.isFinite((teamSummary as any).avg_score_overall)
       ? Number((teamSummary as any).avg_score_overall).toFixed(1)
-      : (completedBatches.length > 0
-        ? (completedBatches.reduce((sum, b) => sum + (b.avgRating || 0), 0) / completedBatches.length).toFixed(1)
-        : 'N/A');
+    : (completedBatches.length > 0 
+      ? (completedBatches.reduce((sum, b) => sum + (b.avgRating || 0), 0) / completedBatches.length).toFixed(1) 
+      : 'N/A');
   const myRank = typeof (teamSummary as any)?.rank === 'number' ? String((teamSummary as any).rank) : '-';
   const perfTag = performanceTagUi((teamSummary as any)?.performance_label);
   const totalSales = typeof (teamSummary as any)?.total_sales === 'number' ? Number((teamSummary as any).total_sales) : 0;
