@@ -295,11 +295,10 @@ const JokeMaker: React.FC = () => {
           <div className="grid grid-cols-2 gap-4">
             <StatBox label="Current Rank" value={myRank} color="bg-green-100 text-green-900 border-2 border-green-400 shadow-md" />
             <StatBox
-              label="Performance Tag"
-              value={perfTag.text}
-              color={perfTag.boxColor}
-              valueClassName="text-xl jf-text-outline"
-              labelClassName="text-xs"
+              label="Sold / Accepted"
+              value={`${teamSummary?.total_sales ?? 0} / ${teamSummary?.accepted_jokes ?? 0}`}
+              valueClassName="text-blue-900"
+              labelClassName="text-blue-900"
             />
             <StatBox label="Avg Score" value={avgScore} color="bg-indigo-50 text-indigo-700" />
             <StatBox label="Batches Created" value={totalBatches} />
