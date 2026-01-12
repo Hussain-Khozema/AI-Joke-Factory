@@ -34,7 +34,8 @@ const LS_SUBMITTED_BATCH_JOKES = 'joke_factory_submitted_batch_jokes_v1';
 const LS_QC_RATED_HISTORY = 'joke_factory_qc_rated_history_v1';
 
 const DEFAULT_ROUND2_BATCH_LIMIT = 10;
-const DEFAULT_UNSOLD_JOKE_PENALTY = 0.1;
+const DEFAULT_MARKET_PRICE = 1;
+const DEFAULT_COST_OF_PUBLISHING = 0.1;
 
 // Helper to init team names (fallback, will be replaced by /v1/teams where possible)
 const INITIAL_TEAM_NAMES: Record<string, string> = {};
@@ -127,6 +128,8 @@ function mapBatchFromTeamList(
         joke_text: j.joke_text,
         id: String(j.joke_id),
         content: j.joke_text,
+        sold_count: (j as any)?.sold_count ?? (j as any)?.soldCount ?? undefined,
+        is_bought: (j as any)?.is_bought ?? (j as any)?.isBought ?? undefined,
       }))
     : (jokeTexts || []).map((txt, idx) => {
         const fakeJokeId = Number(`${batch_id}${idx}`); // stable-ish per batch; only for UI rendering
@@ -391,7 +394,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     customerBudget: 20,
     round1BatchSize: 5,
     round2BatchLimit: DEFAULT_ROUND2_BATCH_LIMIT,
-    unsoldJokePenalty: DEFAULT_UNSOLD_JOKE_PENALTY,
+    marketPrice: DEFAULT_MARKET_PRICE,
+    costOfPublishing: DEFAULT_COST_OF_PUBLISHING,
   });
 
   const [config, setConfig] = useState<GameConfig>(initialConfig());
@@ -536,6 +540,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   shouldUseBackendConfig && Number((r2 as any)?.max_batch_size ?? (r2 as any)?.MaxBatchSize ?? r2?.batch_size) > 1
                     ? Number((r2 as any)?.max_batch_size ?? (r2 as any)?.MaxBatchSize ?? r2?.batch_size)
                     : (prev.round2BatchLimit ?? DEFAULT_ROUND2_BATCH_LIMIT);
+                const nextMarketPrice =
+                  shouldUseBackendConfig && Number(selectedRound?.market_price) > 0
+                    ? Number(selectedRound?.market_price)
+                    : prev.marketPrice ?? DEFAULT_MARKET_PRICE;
+                const nextCostOfPublishing =
+                  shouldUseBackendConfig && Number((selectedRound as any)?.cost_of_publishing) >= 0
+                    ? Number((selectedRound as any)?.cost_of_publishing)
+                    : prev.costOfPublishing ?? DEFAULT_COST_OF_PUBLISHING;
                 return {
                   ...prev,
                   status: isActive ? 'PLAYING' : (round1Status === 'ENDED' ? 'PLAYING' : 'LOBBY'),
@@ -547,6 +559,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   customerBudget: nextCustomerBudget,
                   round1BatchSize: nextRound1BatchSize,
                   round2BatchLimit: nextRound2BatchLimit,
+                  marketPrice: nextMarketPrice,
+                  costOfPublishing: nextCostOfPublishing,
                 };
               });
             }
@@ -858,6 +872,14 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             shouldUseBackendConfig && Number((r2 as any)?.max_batch_size ?? (r2 as any)?.MaxBatchSize ?? r2?.batch_size) > 1
               ? Number((r2 as any)?.max_batch_size ?? (r2 as any)?.MaxBatchSize ?? r2?.batch_size)
               : (prev.round2BatchLimit ?? DEFAULT_ROUND2_BATCH_LIMIT);
+          const nextMarketPrice =
+            shouldUseBackendConfig && Number(selectedRound?.market_price) > 0
+              ? Number(selectedRound?.market_price)
+              : prev.marketPrice ?? DEFAULT_MARKET_PRICE;
+          const nextCostOfPublishing =
+            shouldUseBackendConfig && Number((selectedRound as any)?.cost_of_publishing) >= 0
+              ? Number((selectedRound as any)?.cost_of_publishing)
+              : prev.costOfPublishing ?? DEFAULT_COST_OF_PUBLISHING;
           return {
             ...prev,
             status: isActive ? 'PLAYING' : (round1Status === 'ENDED' ? 'PLAYING' : 'LOBBY'),
@@ -869,6 +891,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             customerBudget: nextCustomerBudget,
             round1BatchSize: nextRound1BatchSize,
             round2BatchLimit: nextRound2BatchLimit,
+            marketPrice: nextMarketPrice,
+            costOfPublishing: nextCostOfPublishing,
           };
         });
 
@@ -1809,7 +1833,8 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (isActive) {
         const batch_size = config.round === 2 ? config.round2BatchLimit : config.round1BatchSize;
         const customer_budget = config.customerBudget;
-        const unsold_jokes_penalty = config.unsoldJokePenalty;
+        const market_price = config.marketPrice;
+        const cost_of_publishing = config.costOfPublishing;
         // Prevent sending obviously invalid defaults (some backends report 0/1 before start).
         if (!Number.isFinite(customer_budget) || customer_budget <= 0) {
           alert('Customer budget must be greater than 0.');
@@ -1819,14 +1844,19 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           alert('Batch size must be at least 2.');
           return;
         }
-        if (!Number.isFinite(unsold_jokes_penalty) || unsold_jokes_penalty < 0) {
-          alert('Unsold joke penalty must be 0 or greater.');
+        if (!Number.isFinite(market_price) || market_price <= 0) {
+          alert('Market Price must be greater than 0.');
+          return;
+        }
+        if (!Number.isFinite(cost_of_publishing) || cost_of_publishing < 0) {
+          alert('Cost of Publishing must be 0 or greater.');
           return;
         }
         await instructorService.start(rid, {
           customer_budget,
           batch_size,
-          unsold_jokes_penalty,
+          market_price,
+          cost_of_publishing,
         });
       }
       setConfig(prev => ({

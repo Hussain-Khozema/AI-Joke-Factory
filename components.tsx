@@ -1,5 +1,5 @@
 import React from 'react';
-import { LogOut, User as UserIcon, X } from 'lucide-react';
+import { LogOut, User as UserIcon, X, Trophy, TrendingUp, Tag } from 'lucide-react';
 import { useGame } from './context';
 import { Role } from './types';
 
@@ -122,6 +122,86 @@ export const RoleLayout: React.FC<{ children: React.ReactNode }> = ({ children }
           © 2025 AI Joke Factory • Educational Use
         </div>
       </footer>
+    </div>
+  );
+};
+
+export const PerformanceToggle: React.FC<{ label?: string }> = ({ label }) => {
+  const normalized = String(label ?? '').trim().toUpperCase().replace(/[\s_]+/g, '_');
+  
+  let activeIndex = -1;
+  if (normalized === 'HIGH_PERFORMING' || normalized === 'HIGH') activeIndex = 0;
+  else if (normalized === 'AVG' || normalized === 'AVERAGE' || normalized === 'AVG_PERFORMING' || normalized === 'AVERAGE_PERFORMING') activeIndex = 1;
+  else if (normalized === 'LOW_PERFORMING' || normalized === 'LOW') activeIndex = 2;
+
+  // New state to control the animation duration
+  const [isAnimating, setIsAnimating] = React.useState(false);
+
+  // Effect to trigger animation when activeIndex changes to 0 (Best Seller)
+  React.useEffect(() => {
+    if (activeIndex === 0) {
+      setIsAnimating(true);
+      // Removed the timeout here, relying on CSS animation iteration count for smooth stop
+    } else {
+      setIsAnimating(false);
+    }
+  }, [activeIndex]);
+
+  return (
+    <div className="mb-6">
+      <div className="flex items-center gap-3 mb-3">
+        <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Market Position</h4>
+        <div className="h-px bg-gray-100 flex-1"></div>
+      </div>
+      
+      <div className="flex gap-1.5 w-full">
+        {/* Best Seller (Flex Grow to take space) */}
+        <div
+          className={`
+            relative flex-1 flex flex-row items-center justify-center gap-1.5 px-1 py-3 rounded-xl border-2 transition-all duration-300 ease-out whitespace-nowrap
+            ${activeIndex === 0 
+              ? 'border-emerald-700 bg-emerald-700 text-white shadow-lg shadow-emerald-200 scale-[1.03] z-10' 
+              : 'border-transparent bg-gray-50 text-gray-400'
+            }
+          `}
+        >
+          <Trophy 
+            size={18} 
+            className={`shrink-0 ${isAnimating ? 'animate-bounce' : ''}`} 
+            style={isAnimating ? { animationIterationCount: 10 } : undefined}
+            strokeWidth={2.5} 
+          />
+          <span className="font-bold text-sm sm:text-base tracking-tight leading-none">Best Seller</span>
+        </div>
+
+        {/* Trending (Flex Grow to take space) */}
+        <div
+          className={`
+             relative flex-1 flex flex-row items-center justify-center gap-1.5 px-1 py-3 rounded-xl border-2 transition-all duration-300 ease-out whitespace-nowrap
+            ${activeIndex === 1 
+              ? 'border-blue-600 bg-blue-600 text-white shadow-lg shadow-blue-200 scale-[1.03] z-10' 
+              : 'border-transparent bg-gray-50 text-gray-400'
+            }
+          `}
+        >
+          <TrendingUp size={18} className="shrink-0" strokeWidth={2.5} />
+          <span className="font-bold text-sm sm:text-base tracking-tight leading-none">Trending</span>
+        </div>
+
+        {/* Seller (Fixed width / Flex none, smaller) */}
+        <div
+          className={`
+             relative flex-none w-24 flex flex-row items-center justify-center gap-1.5 px-1 py-3 rounded-xl border-2 transition-all duration-300 ease-out whitespace-nowrap
+            ${activeIndex === 2 
+              ? 'border-gray-200 bg-white text-gray-700 shadow-sm' 
+              : 'border-transparent bg-gray-50 text-gray-400'
+            }
+          `}
+        >
+          <Tag size={18} className="shrink-0" strokeWidth={2.5} />
+          <span className="font-bold text-xs sm:text-sm tracking-tight leading-none">Seller</span>
+        </div>
+      </div>
     </div>
   );
 };

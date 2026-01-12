@@ -34,7 +34,8 @@ const Instructor: React.FC = () => {
 
   const [localBatchSize, setLocalBatchSize] = useState(config.round1BatchSize);
   const [localBudget, setLocalBudget] = useState(config.customerBudget);
-  const [localUnsoldJokePenalty, setLocalUnsoldJokePenalty] = useState(config.unsoldJokePenalty);
+  const [localMarketPrice, setLocalMarketPrice] = useState(config.marketPrice);
+  const [localCostOfPublishing, setLocalCostOfPublishing] = useState(config.costOfPublishing);
   const [selectedCustomerCount, setSelectedCustomerCount] = useState<number | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showEndRound1Confirm, setShowEndRound1Confirm] = useState(false);
@@ -73,7 +74,8 @@ const Instructor: React.FC = () => {
   // Keep local inputs aligned with server-driven config changes (polling/reset).
   useEffect(() => setLocalBatchSize(config.round1BatchSize), [config.round1BatchSize]);
   useEffect(() => setLocalBudget(config.customerBudget), [config.customerBudget]);
-  useEffect(() => setLocalUnsoldJokePenalty(config.unsoldJokePenalty), [config.unsoldJokePenalty]);
+  useEffect(() => setLocalMarketPrice(config.marketPrice), [config.marketPrice]);
+  useEffect(() => setLocalCostOfPublishing(config.costOfPublishing), [config.costOfPublishing]);
 
   const handleDeleteUser = async (userId: string, displayName?: string) => {
     const label = displayName ? `${displayName} (${userId})` : `user ${userId}`;
@@ -130,23 +132,24 @@ const Instructor: React.FC = () => {
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  // Config edit rules:
-  // - While a round is active: config is not editable.
-  // - In round 2: only customer budget + unsold joke penalty are editable.
+// Config edit rules:
+// - While a round is active: config is not editable.
+// - In round 2: only customer budget + pricing are editable.
   const canEditBatchSize = !config.isActive && config.round === 1;
   const canEditBudget = !config.isActive && (config.round === 1 || config.round === 2);
-  const canEditUnsoldJokePenalty = !config.isActive && (config.round === 1 || config.round === 2);
+  const canEditPricing = !config.isActive && (config.round === 1 || config.round === 2);
 
   const hasPendingConfigChanges =
     (canEditBatchSize && localBatchSize !== config.round1BatchSize) ||
     (canEditBudget && localBudget !== config.customerBudget) ||
-    (canEditUnsoldJokePenalty && localUnsoldJokePenalty !== config.unsoldJokePenalty);
+    (canEditPricing && (localMarketPrice !== config.marketPrice || localCostOfPublishing !== config.costOfPublishing));
 
   const handleUpdateSettings = () => {
     const updates: any = {};
     if (canEditBatchSize && localBatchSize !== config.round1BatchSize) updates.round1BatchSize = localBatchSize;
     if (canEditBudget && localBudget !== config.customerBudget) updates.customerBudget = localBudget;
-    if (canEditUnsoldJokePenalty && localUnsoldJokePenalty !== config.unsoldJokePenalty) updates.unsoldJokePenalty = localUnsoldJokePenalty;
+    if (canEditPricing && localMarketPrice !== config.marketPrice) updates.marketPrice = localMarketPrice;
+    if (canEditPricing && localCostOfPublishing !== config.costOfPublishing) updates.costOfPublishing = localCostOfPublishing;
     if (Object.keys(updates).length === 0) return;
     updateConfig(updates);
   };
@@ -1653,17 +1656,31 @@ const Instructor: React.FC = () => {
                    className={`w-16 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditBudget ? 'opacity-50 cursor-not-allowed' : ''}`}
                  />
                </div>
-               <div className="flex items-center gap-2">
-                 <label className="text-sm text-gray-600">Unsold Joke Penalty:</label>
-                 <input
-                   type="number"
-                   step="0.1"
-                   min="0"
-                   value={localUnsoldJokePenalty}
-                   onChange={e => setLocalUnsoldJokePenalty(Number(e.target.value))}
-                   disabled={!canEditUnsoldJokePenalty}
-                   className={`w-20 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditUnsoldJokePenalty ? 'opacity-50 cursor-not-allowed' : ''}`}
-                 />
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-600">Market Price (p):</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={localMarketPrice}
+                    onChange={e => setLocalMarketPrice(Number(e.target.value))}
+                    disabled={!canEditPricing}
+                    className={`w-24 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditPricing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-sm text-gray-600 whitespace-nowrap">Cost of Publishing (c):</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={localCostOfPublishing}
+                    onChange={e => setLocalCostOfPublishing(Number(e.target.value))}
+                    disabled={!canEditPricing}
+                    className={`w-24 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditPricing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  />
+                </div>
                  <Button
                    type="button"
                    onClick={handleUpdateSettings}

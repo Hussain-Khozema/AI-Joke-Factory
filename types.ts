@@ -59,6 +59,10 @@ export interface Joke {
   id: string;
   content: string;
 
+  // Market / publishing info (if provided by backend)
+  sold_count?: number;
+  is_bought?: boolean;
+
   // QC feedback (client-side only; schema does not include tags/feedback)
   rating?: number; // 1-5
   tags?: string[];
@@ -103,11 +107,8 @@ export interface GameConfig {
   customerBudget: number;
   round1BatchSize: number;
   round2BatchLimit: number;
-  /**
-   * Dollar penalty applied to a team's score/sales for each unsold joke.
-   * Set by instructor before starting the round.
-   */
-  unsoldJokePenalty: number;
+  marketPrice: number;
+  costOfPublishing: number;
 }
 
 // --- API shapes (schema-aligned) ---

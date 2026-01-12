@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useGame } from '../context';
-import { Button, Card, StatBox, RoleLayout, Modal } from '../components';
-import { Star, CheckCircle, Clock, Tag, AlertTriangle } from 'lucide-react';
+import { Button, Card, StatBox, RoleLayout, Modal, PerformanceToggle } from '../components';
+import { Star, CheckCircle, Clock, Tag, AlertTriangle, Info } from 'lucide-react';
 import { Batch } from '../types';
 
 const performanceTagUi = (raw: unknown): { text: string; boxColor: string } => {
@@ -76,6 +76,11 @@ const QualityControl: React.FC = () => {
   const perfTag = performanceTagUi((teamSummary as any)?.performance_label);
   const totalSales = typeof (teamSummary as any)?.total_sales === 'number' ? Number((teamSummary as any).total_sales) : 0;
   const profitNum = typeof (teamSummary as any)?.profit === 'number' ? Number((teamSummary as any).profit) : null;
+  const marketPrice = typeof (teamSummary as any)?.market_price === 'number' ? Number((teamSummary as any).market_price) : null;
+  const publishCost = (() => {
+    const raw = (teamSummary as any)?.cost_of_publishign ?? (teamSummary as any)?.cost_of_publishing;
+    return typeof raw === 'number' ? Number(raw) : null;
+  })();
   const profit =
     profitNum !== null && Number.isFinite(profitNum)
       ? `$${profitNum.toFixed(2)}`
@@ -90,6 +95,8 @@ const QualityControl: React.FC = () => {
         ? 'bg-red-50 text-red-800'
         : 'bg-emerald-50 text-emerald-800')
       : 'bg-slate-50 text-slate-700';
+  const pDisplay = marketPrice !== null && Number.isFinite(marketPrice) ? `$${marketPrice.toFixed(2)}` : '—';
+  const cDisplay = publishCost !== null && Number.isFinite(publishCost) ? `$${publishCost.toFixed(2)}` : '—';
 
   const handleRate = (jokeId: string, rating: number) => {
     setCurrentRatings(prev => ({ ...prev, [jokeId]: rating }));
@@ -258,6 +265,7 @@ const QualityControl: React.FC = () => {
 
         {/* Right Column: Stats & Queue List */}
         <div className="space-y-6">
+          <PerformanceToggle label={(teamSummary as any)?.performance_label} />
           <div className="grid grid-cols-2 gap-4">
             <StatBox label="Current Rank" value={myRank} color="bg-green-100 text-green-900 border-2 border-green-400 shadow-md" />
             <StatBox
@@ -269,12 +277,28 @@ const QualityControl: React.FC = () => {
             <StatBox label="Avg Score" value={avgScore} color="bg-indigo-50 text-indigo-700" />
             <StatBox label="Queue" value={qcQueue?.queue_size ?? pendingBatches.length} color="bg-purple-50 text-purple-700" />
             <StatBox label="Total Sales" value={totalSales} color="bg-amber-50 text-amber-700" />
-            <StatBox
-              label="Profit"
-              value={profit}
-              color={profitBoxColor}
-              valueClassName={profitValueColor}
-            />
+            <div className="flip-card h-full">
+              <div className="flip-card-inner">
+                <div className={`flip-card-face ${profitBoxColor} p-4 flex flex-col items-center justify-center shadow-sm relative`}>
+                  <Info size={16} className="text-gray-400 absolute top-2 right-2 opacity-80" />
+                  <span className={`text-3xl font-bold ${profitValueColor}`}>{profit}</span>
+                  <span className="text-sm uppercase tracking-wide opacity-80 mt-1">Profit</span>
+                  <span className="text-[11px] text-gray-600 mt-1">p={pDisplay} • c={cDisplay}</span>
+                </div>
+                <div
+                  className={`flip-card-face flip-card-back ${profitBoxColor} p-4 flex flex-col items-center justify-center shadow-sm`}
+                  title="Profit = p × Total Sales − n × Published"
+                >
+                  <div className="inline-flex flex-col items-start text-xs sm:text-sm font-semibold text-gray-900 leading-snug">
+                    <div>{pDisplay} × Total Sales</div>
+                    <div className="flex items-center gap-1 mt-1 ml-3">
+                      <span className="text-lg font-bold text-gray-800">−</span>
+                      <span>{cDisplay} × Published</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <Card title="Incoming Queue">
@@ -319,6 +343,33 @@ const QualityControl: React.FC = () => {
                         <span className="block text-gray-500 text-[10px] uppercase">Accepted</span>
                         <span className="font-bold text-green-600">{b.acceptedCount}</span>
                       </div>
+                    </div>
+                    {/* Accepted / Published jokes with sales */}
+                    <div className="mt-3 bg-white border border-gray-200 rounded p-2">
+                      <span className="text-[11px] font-semibold text-gray-500 uppercase block mb-1">Published Jokes</span>
+                      {(() => {
+                        const published = (b.jokes || []).filter(j => {
+                          const sold = Number((j as any)?.sold_count ?? (j as any)?.soldCount ?? 0);
+                          const bought = Boolean((j as any)?.is_bought ?? (j as any)?.isBought ?? false);
+                          return sold > 0 || bought;
+                        });
+                        if (!published.length) {
+                          return <span className="text-xs text-gray-400">None</span>;
+                        }
+                        return (
+                          <ul className="space-y-1">
+                            {published.map(j => {
+                              const sold = Number((j as any)?.sold_count ?? (j as any)?.soldCount ?? 0);
+                              return (
+                                <li key={j.id} className="text-xs text-gray-800 flex justify-between gap-2">
+                                  <span className="line-clamp-2">{j.content}</span>
+                                  <span className="text-[11px] text-green-700 font-semibold shrink-0">Sold: {sold}</span>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        );
+                      })()}
                     </div>
                  </div>
                ))}

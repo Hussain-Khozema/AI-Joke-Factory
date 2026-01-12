@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useGame } from '../context';
-import { Button, Card, StatBox, RoleLayout, Modal } from '../components';
-import { Plus, Trash2, Send, CheckCircle, AlertCircle, MessageSquare } from 'lucide-react';
+import { Button, Card, StatBox, RoleLayout, Modal, PerformanceToggle } from '../components';
+import { Plus, Trash2, Send, CheckCircle, AlertCircle, MessageSquare, Info } from 'lucide-react';
 import { Role, Batch } from '../types';
 
 const performanceTagUi = (raw: unknown): { text: string; boxColor: string } => {
@@ -42,6 +42,11 @@ const JokeMaker: React.FC = () => {
   const myRank = teamSummary?.rank ?? '-';
   const perfTag = performanceTagUi((teamSummary as any)?.performance_label);
   const profitNum = typeof (teamSummary as any)?.profit === 'number' ? Number((teamSummary as any).profit) : null;
+  const marketPrice = typeof (teamSummary as any)?.market_price === 'number' ? Number((teamSummary as any).market_price) : null;
+  const publishCost = (() => {
+    const raw = (teamSummary as any)?.cost_of_publishign ?? (teamSummary as any)?.cost_of_publishing;
+    return typeof raw === 'number' ? Number(raw) : null;
+  })();
   const profit =
     profitNum !== null && Number.isFinite(profitNum)
       ? `$${profitNum.toFixed(2)}`
@@ -56,6 +61,8 @@ const JokeMaker: React.FC = () => {
         ? 'bg-red-50 text-red-800'
         : 'bg-emerald-50 text-emerald-800')
       : 'bg-slate-50 text-slate-700';
+  const pDisplay = marketPrice !== null && Number.isFinite(marketPrice) ? `$${marketPrice.toFixed(2)}` : '—';
+  const cDisplay = publishCost !== null && Number.isFinite(publishCost) ? `$${publishCost.toFixed(2)}` : '—';
 
   const isRound1 = config.round === 1;
   // Before Round 1 starts, backend may still report a placeholder batch size (often 1).
@@ -292,6 +299,7 @@ const JokeMaker: React.FC = () => {
 
         {/* Right Column: Dashboard & History */}
         <div className="space-y-6">
+          <PerformanceToggle label={(teamSummary as any)?.performance_label} />
           <div className="grid grid-cols-2 gap-4">
             <StatBox label="Current Rank" value={myRank} color="bg-green-100 text-green-900 border-2 border-green-400 shadow-md" />
             <StatBox
@@ -303,12 +311,28 @@ const JokeMaker: React.FC = () => {
             <StatBox label="Avg Score" value={avgScore} color="bg-indigo-50 text-indigo-700" />
             <StatBox label="Batches Created" value={totalBatches} />
             <StatBox label="Total Sales" value={mySales} color="bg-amber-50 text-amber-700" />
-            <StatBox
-              label="Profit"
-              value={profit}
-              color={profitBoxColor}
-              valueClassName={profitValueColor}
-            />
+            <div className="flip-card h-full">
+              <div className="flip-card-inner">
+                <div className={`flip-card-face ${profitBoxColor} p-4 flex flex-col items-center justify-center shadow-sm relative`}>
+                  <Info size={16} className="text-gray-400 absolute top-2 right-2 opacity-80" />
+                  <span className={`text-3xl font-bold ${profitValueColor}`}>{profit}</span>
+                  <span className="text-sm uppercase tracking-wide opacity-80 mt-1">Profit</span>
+                  <span className="text-[11px] text-gray-600 mt-1">p={pDisplay} • c={cDisplay}</span>
+                </div>
+                <div
+                  className={`flip-card-face flip-card-back ${profitBoxColor} p-4 flex flex-col items-center justify-center shadow-sm`}
+                  title="Profit = p × Total Sales − n × Published"
+                >
+                  <div className="inline-flex flex-col items-start text-xs sm:text-sm font-semibold text-gray-900 leading-snug">
+                    <div>{pDisplay} × Total Sales</div>
+                    <div className="flex items-center gap-1 mt-1 ml-3">
+                      <span className="text-lg font-bold text-gray-800">−</span>
+                      <span>{cDisplay} × Published</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <Card title="Joke Clipboard">
