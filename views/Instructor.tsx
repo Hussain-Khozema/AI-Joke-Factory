@@ -2066,15 +2066,19 @@ const Instructor: React.FC = () => {
           <Card
             title="Wasted Jokes"
             action={
-              <div className="flex rounded border border-gray-200 overflow-hidden text-xs">
+              <div className="flex items-center rounded-md border border-gray-200 bg-white p-0.5">
                 <button
-                  className={`px-3 py-1 ${wasteChartMode === 'count' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}`}
+                  className={`px-2 py-1 rounded text-xs font-bold ${
+                    wasteChartMode === 'count' ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'
+                  }`}
                   onClick={() => setWasteChartMode('count')}
                 >
                   Count
                 </button>
                 <button
-                  className={`px-3 py-1 ${wasteChartMode === 'rate' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}`}
+                  className={`px-2 py-1 rounded text-xs font-bold ${
+                    wasteChartMode === 'rate' ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'
+                  }`}
                   onClick={() => setWasteChartMode('rate')}
                 >
                   Rejection Rate
@@ -2100,7 +2104,7 @@ const Instructor: React.FC = () => {
                       angle: -90,
                       position: 'insideLeft',
                       style: { textAnchor: 'middle' },
-                      offset: 10,
+                      offset: 25,
                     }}
                     tickFormatter={(v) => wasteChartMode === 'rate' ? `${Math.round(v * 100)}%` : v}
                     domain={(() => {
