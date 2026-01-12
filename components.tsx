@@ -154,13 +154,13 @@ export const PerformanceToggle: React.FC<{ label?: string }> = ({ label }) => {
         <div className="h-px bg-gray-100 flex-1"></div>
       </div>
       
-      <div className="flex gap-1.5 w-full">
+      <div className="flex gap-1.5 w-full relative isolate">
         {/* Best Seller (Flex Grow to take space) */}
         <div
           className={`
-            relative flex-1 flex flex-row items-center justify-center gap-1.5 px-1 py-3 rounded-xl border-2 transition-all duration-300 ease-out whitespace-nowrap
+            flex-1 flex flex-row items-center justify-center gap-1.5 px-1 py-3 rounded-xl border-2 transition-all duration-300 ease-out whitespace-nowrap
             ${activeIndex === 0 
-              ? 'border-emerald-700 bg-emerald-700 text-white shadow-lg shadow-emerald-200 scale-[1.03] z-10' 
+              ? 'border-emerald-700 bg-emerald-700 text-white shadow-lg shadow-emerald-200 scale-[1.03]' 
               : 'border-transparent bg-gray-50 text-gray-400'
             }
           `}
@@ -177,9 +177,9 @@ export const PerformanceToggle: React.FC<{ label?: string }> = ({ label }) => {
         {/* Trending (Flex Grow to take space) */}
         <div
           className={`
-             relative flex-1 flex flex-row items-center justify-center gap-1.5 px-1 py-3 rounded-xl border-2 transition-all duration-300 ease-out whitespace-nowrap
+             flex-1 flex flex-row items-center justify-center gap-1.5 px-1 py-3 rounded-xl border-2 transition-all duration-300 ease-out whitespace-nowrap
             ${activeIndex === 1 
-              ? 'border-blue-600 bg-blue-600 text-white shadow-lg shadow-blue-200 scale-[1.03] z-10' 
+              ? 'border-blue-600 bg-blue-600 text-white shadow-lg shadow-blue-200 scale-[1.03]' 
               : 'border-transparent bg-gray-50 text-gray-400'
             }
           `}
@@ -191,7 +191,7 @@ export const PerformanceToggle: React.FC<{ label?: string }> = ({ label }) => {
         {/* Seller (Fixed width / Flex none, smaller) */}
         <div
           className={`
-             relative flex-none w-24 flex flex-row items-center justify-center gap-1.5 px-1 py-3 rounded-xl border-2 transition-all duration-300 ease-out whitespace-nowrap
+             flex-none w-24 flex flex-row items-center justify-center gap-1.5 px-1 py-3 rounded-xl border-2 transition-all duration-300 ease-out whitespace-nowrap
             ${activeIndex === 2 
               ? 'border-gray-200 bg-white text-gray-700 shadow-sm' 
               : 'border-transparent bg-gray-50 text-gray-400'

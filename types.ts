@@ -62,6 +62,7 @@ export interface Joke {
   // Market / publishing info (if provided by backend)
   sold_count?: number;
   is_bought?: boolean;
+  is_published?: boolean;
 
   // QC feedback (client-side only; schema does not include tags/feedback)
   rating?: number; // 1-5
@@ -332,6 +333,12 @@ export interface ApiInstructorStatsResponse {
     total_jokes: number;
     rated_jokes: number;
     accepted_jokes: number;
+    rejection_rate: number;
+  }>;
+  rejection_by_team: Array<{
+    team_id: TeamId;
+    team_name: string;
+    unaccepted_jokes: number;
     rejection_rate: number;
   }>;
   revenue_vs_acceptance: Array<{

@@ -130,6 +130,7 @@ function mapBatchFromTeamList(
         content: j.joke_text,
         sold_count: (j as any)?.sold_count ?? (j as any)?.soldCount ?? undefined,
         is_bought: (j as any)?.is_bought ?? (j as any)?.isBought ?? undefined,
+        is_published: (j as any)?.is_published ?? (j as any)?.isPublished ?? undefined,
       }))
     : (jokeTexts || []).map((txt, idx) => {
         const fakeJokeId = Number(`${batch_id}${idx}`); // stable-ish per batch; only for UI rendering
@@ -212,6 +213,7 @@ function normalizeInstructorStats(raw: any): ApiInstructorStatsResponse {
       ? (data.batch_sequence_quality ?? data.BatchSequenceQuality)
       : [];
   const output_vs_rejection = Array.isArray(data.output_vs_rejection ?? data.OutputVsRejection) ? (data.output_vs_rejection ?? data.OutputVsRejection) : [];
+  const rejection_by_team = Array.isArray(data.rejection_by_team ?? data.RejectionByTeam) ? (data.rejection_by_team ?? data.RejectionByTeam) : [];
   const revenue_vs_acceptance = Array.isArray(data.revenue_vs_acceptance ?? data.RevenueVsAcceptance) ? (data.revenue_vs_acceptance ?? data.RevenueVsAcceptance) : [];
 
   const mapKeys = (arr: any[], keyMap: Record<string, string>) =>
@@ -278,6 +280,16 @@ function normalizeInstructorStats(raw: any): ApiInstructorStatsResponse {
       RatedJokes: 'rated_jokes',
       accepted_jokes: 'accepted_jokes',
       AcceptedJokes: 'accepted_jokes',
+      rejection_rate: 'rejection_rate',
+      RejectionRate: 'rejection_rate',
+    }),
+    rejection_by_team: mapKeys(rejection_by_team, {
+      team_id: 'team_id',
+      TeamId: 'team_id',
+      team_name: 'team_name',
+      TeamName: 'team_name',
+      unaccepted_jokes: 'unaccepted_jokes',
+      UnacceptedJokes: 'unaccepted_jokes',
       rejection_rate: 'rejection_rate',
       RejectionRate: 'rejection_rate',
     }),
@@ -1078,9 +1090,21 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 ),
               );
               // Merge QC-rated history (if any) so JM can still see feedback in same session.
+              // Process qcExtra first, then mapped overwrites - so API data (is_published, sold_count) wins
               const qcExtra = Object.values(qcRatedHistoryRef.current).filter((b: Batch) => b.team_id === me.assignment.team_id);
-              const merged = [...mapped, ...qcExtra].reduce<Record<string, Batch>>((acc, b: Batch) => {
-                acc[String(b.batch_id)] = b;
+              const merged = [...qcExtra, ...mapped].reduce<Record<string, Batch>>((acc, b: Batch) => {
+                const existing = acc[String(b.batch_id)];
+                if (existing) {
+                  // Merge: API data wins, but keep local feedback/tags if API doesn't have them
+                  acc[String(b.batch_id)] = {
+                    ...existing,
+                    ...b,
+                    feedback: b.feedback ?? existing.feedback,
+                    tagSummary: b.tagSummary?.length ? b.tagSummary : existing.tagSummary,
+                  };
+                } else {
+                  acc[String(b.batch_id)] = b;
+                }
                 return acc;
               }, {} as Record<string, Batch>);
               setBatches(Object.values(merged).sort((a, b) => (a.batch_id - b.batch_id)));
@@ -1233,9 +1257,21 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   submittedBatchJokesRef.current[`${effectiveRound}:${String(b.batch_id)}`],
                 ),
               );
+              // Process qcExtra first, then mapped overwrites - so API data (is_published, sold_count) wins
               const qcExtra = Object.values(qcRatedHistoryRef.current).filter((b: Batch) => b.team_id === qcTeamId);
-              const merged = [...mapped, ...qcExtra].reduce<Record<string, Batch>>((acc, b: Batch) => {
-                acc[String(b.batch_id)] = b;
+              const merged = [...qcExtra, ...mapped].reduce<Record<string, Batch>>((acc, b: Batch) => {
+                const existing = acc[String(b.batch_id)];
+                if (existing) {
+                  // Merge: API data wins, but keep local feedback/tags if API doesn't have them
+                  acc[String(b.batch_id)] = {
+                    ...existing,
+                    ...b,
+                    feedback: b.feedback ?? existing.feedback,
+                    tagSummary: b.tagSummary?.length ? b.tagSummary : existing.tagSummary,
+                  };
+                } else {
+                  acc[String(b.batch_id)] = b;
+                }
                 return acc;
               }, {} as Record<string, Batch>);
               if (!cancelled) {

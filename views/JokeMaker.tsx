@@ -42,11 +42,9 @@ const JokeMaker: React.FC = () => {
   const myRank = teamSummary?.rank ?? '-';
   const perfTag = performanceTagUi((teamSummary as any)?.performance_label);
   const profitNum = typeof (teamSummary as any)?.profit === 'number' ? Number((teamSummary as any).profit) : null;
-  const marketPrice = typeof (teamSummary as any)?.market_price === 'number' ? Number((teamSummary as any).market_price) : null;
-  const publishCost = (() => {
-    const raw = (teamSummary as any)?.cost_of_publishign ?? (teamSummary as any)?.cost_of_publishing;
-    return typeof raw === 'number' ? Number(raw) : null;
-  })();
+  // Use config (from active round API) for market_price and cost_of_publishing
+  const marketPrice = typeof config.marketPrice === 'number' && config.marketPrice > 0 ? config.marketPrice : null;
+  const publishCost = typeof config.costOfPublishing === 'number' && config.costOfPublishing >= 0 ? config.costOfPublishing : null;
   const profit =
     profitNum !== null && Number.isFinite(profitNum)
       ? `$${profitNum.toFixed(2)}`
@@ -299,7 +297,7 @@ const JokeMaker: React.FC = () => {
 
         {/* Right Column: Dashboard & History */}
         <div className="space-y-6">
-          <PerformanceToggle label={(teamSummary as any)?.performance_label} />
+          <PerformanceToggle label={mySales > 0 ? (teamSummary as any)?.performance_label : undefined} />
           <div className="grid grid-cols-2 gap-4">
             <StatBox label="Current Rank" value={myRank} color="bg-green-100 text-green-900 border-2 border-green-400 shadow-md" />
             <StatBox

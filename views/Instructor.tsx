@@ -225,18 +225,37 @@ const Instructor: React.FC = () => {
   }, [statsR1?.leaderboard]);
 
   const wasteChartData = useMemo(() => {
-    const src =
-      (instructorStats?.rejection_by_team as any[]) ??
-      (statsR2?.rejection_by_team as any[]) ??
-      (statsR1?.rejection_by_team as any[]) ??
-      [];
-    return (src || []).map((row: any) => ({
-      team_id: String(row.team_id),
-      team_name: teamNames[String(row.team_id)] || row.team_name || `Team ${row.team_id}`,
-      wasted: Number(row.unaccepted_jokes ?? 0),
-      rate: Number(row.rejection_rate ?? 0),
-    }));
-  }, [instructorStats?.rejection_by_team, statsR1?.rejection_by_team, statsR2?.rejection_by_team, teamNames]);
+    const r1Data = (statsR1?.rejection_by_team as any[]) ?? [];
+    const r2Data = (statsR2?.rejection_by_team as any[]) ?? [];
+    
+    // Collect all unique team IDs from both rounds
+    const allTeamIds = new Set<number>();
+    r1Data.forEach((row: any) => allTeamIds.add(Number(row.team_id)));
+    r2Data.forEach((row: any) => allTeamIds.add(Number(row.team_id)));
+    
+    // Create lookup maps
+    const r1Map: Record<string, any> = {};
+    const r2Map: Record<string, any> = {};
+    r1Data.forEach((row: any) => { r1Map[String(row.team_id)] = row; });
+    r2Data.forEach((row: any) => { r2Map[String(row.team_id)] = row; });
+    
+    // Sort by team ID numerically (Team 1, Team 2, ..., Team N)
+    const sortedTeamIds = Array.from(allTeamIds).sort((a, b) => a - b);
+    
+    return sortedTeamIds.map(teamId => {
+      const tid = String(teamId);
+      const r1Row = r1Map[tid];
+      const r2Row = r2Map[tid];
+      return {
+        team_id: tid,
+        team_name: teamNames[tid] || r1Row?.team_name || r2Row?.team_name || `Team ${teamId}`,
+        r1_wasted: Number(r1Row?.unaccepted_jokes ?? 0),
+        r1_rate: Number(r1Row?.rejection_rate ?? 0),
+        r2_wasted: Number(r2Row?.unaccepted_jokes ?? 0),
+        r2_rate: Number(r2Row?.rejection_rate ?? 0),
+      };
+    });
+  }, [statsR1?.rejection_by_team, statsR2?.rejection_by_team, teamNames]);
   const avgQualityR2ByTeamId = useMemo(() => {
     const out: Record<string, number> = {};
     (statsR2?.leaderboard ?? []).forEach(row => {
@@ -2062,7 +2081,7 @@ const Instructor: React.FC = () => {
             </Card>
           )}
 
-          {/* Wasted Jokes / Rejection Rate (full width) */}
+          {/* Wasted Jokes / Rejection Rate (full width) - R1/R2 side by side */}
           <Card
             title="Wasted Jokes"
             action={
@@ -2092,9 +2111,10 @@ const Instructor: React.FC = () => {
                 <BarChart
                   data={wasteChartData.map(item => ({
                     team: item.team_name,
-                    value: wasteChartMode === 'count' ? item.wasted : item.rate,
+                    R1: wasteChartMode === 'count' ? item.r1_wasted : item.r1_rate,
+                    R2: wasteChartMode === 'count' ? item.r2_wasted : item.r2_rate,
                   }))}
-                  margin={{ top: 10, right: 20, left: 0, bottom: 30 }}
+                  margin={{ top: 10, right: 20, left: wasteChartMode === 'rate' ? 50 : 30, bottom: 30 }}
                 >
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="team" angle={-15} textAnchor="end" height={50} />
@@ -2104,34 +2124,42 @@ const Instructor: React.FC = () => {
                       angle: -90,
                       position: 'insideLeft',
                       style: { textAnchor: 'middle' },
-                      offset: 25,
+                      dx: wasteChartMode === 'rate' ? -15 : -5,
                     }}
                     tickFormatter={(v) => wasteChartMode === 'rate' ? `${Math.round(v * 100)}%` : v}
+                    width={wasteChartMode === 'rate' ? 45 : 35}
                     domain={(() => {
-                      const maxVal = Math.max(...wasteChartData.map(d => wasteChartMode === 'count' ? d.wasted : d.rate), 0);
+                      const maxVal = Math.max(
+                        ...wasteChartData.map(d => wasteChartMode === 'count' ? Math.max(d.r1_wasted, d.r2_wasted) : Math.max(d.r1_rate, d.r2_rate)),
+                        0
+                      );
                       if (maxVal <= 0) return wasteChartMode === 'rate' ? [0, 0.25] : [0, 25];
-                      const targetMax = maxVal * 1.25; // make highest bar ~4/5 of axis
+                      const targetMax = maxVal * 1.25;
                       const step = wasteChartMode === 'rate' ? 0.05 : 5;
                       const roundedMax = Math.ceil(targetMax / step) * step;
                       return [0, roundedMax];
                     })()}
                     ticks={(() => {
-                      const [min, max] = (() => {
-                        const maxVal = Math.max(...wasteChartData.map(d => wasteChartMode === 'count' ? d.wasted : d.rate), 0);
-                        if (maxVal <= 0) return wasteChartMode === 'rate' ? [0, 0.25] : [0, 25];
+                      const maxVal = Math.max(
+                        ...wasteChartData.map(d => wasteChartMode === 'count' ? Math.max(d.r1_wasted, d.r2_wasted) : Math.max(d.r1_rate, d.r2_rate)),
+                        0
+                      );
+                      const max = (() => {
+                        if (maxVal <= 0) return wasteChartMode === 'rate' ? 0.25 : 25;
                         const targetMax = maxVal * 1.25;
                         const step = wasteChartMode === 'rate' ? 0.05 : 5;
-                        const roundedMax = Math.ceil(targetMax / step) * step;
-                        return [0, roundedMax];
+                        return Math.ceil(targetMax / step) * step;
                       })();
                       const step = wasteChartMode === 'rate' ? 0.05 : 5;
                       const ticks: number[] = [];
-                      for (let t = min; t <= max; t += step) ticks.push(t);
+                      for (let t = 0; t <= max; t += step) ticks.push(t);
                       return ticks;
                     })()}
                   />
                   <Tooltip formatter={(v: any) => wasteChartMode === 'rate' ? `${(Number(v) * 100).toFixed(1)}%` : v} />
-                  <Bar dataKey="value" name={wasteChartMode === 'count' ? 'Wasted Jokes' : 'Rejection Rate'} fill="#2563eb" />
+                  <Legend />
+                  <Bar dataKey="R1" name="Round 1" fill="#3B82F6" />
+                  <Bar dataKey="R2" name="Round 2" fill="#F97316" />
                 </BarChart>
               </ResponsiveContainer>
             </div>

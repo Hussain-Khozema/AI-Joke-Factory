@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useGame } from '../context';
 import { Button, Card, StatBox, RoleLayout, Modal, PerformanceToggle } from '../components';
-import { Star, CheckCircle, Clock, Tag, AlertTriangle, Info } from 'lucide-react';
+import { Star, CheckCircle, Clock, Tag, AlertTriangle, Info, ChevronDown, ChevronUp } from 'lucide-react';
 import { Batch } from '../types';
 
 const performanceTagUi = (raw: unknown): { text: string; boxColor: string } => {
@@ -76,11 +76,12 @@ const QualityControl: React.FC = () => {
   const perfTag = performanceTagUi((teamSummary as any)?.performance_label);
   const totalSales = typeof (teamSummary as any)?.total_sales === 'number' ? Number((teamSummary as any).total_sales) : 0;
   const profitNum = typeof (teamSummary as any)?.profit === 'number' ? Number((teamSummary as any).profit) : null;
-  const marketPrice = typeof (teamSummary as any)?.market_price === 'number' ? Number((teamSummary as any).market_price) : null;
-  const publishCost = (() => {
-    const raw = (teamSummary as any)?.cost_of_publishign ?? (teamSummary as any)?.cost_of_publishing;
-    return typeof raw === 'number' ? Number(raw) : null;
-  })();
+  // Use config (from active round API) for market_price and cost_of_publishing
+  const marketPrice = typeof config.marketPrice === 'number' && config.marketPrice > 0 ? config.marketPrice : null;
+  const publishCost = typeof config.costOfPublishing === 'number' && config.costOfPublishing >= 0 ? config.costOfPublishing : null;
+  
+  // Track which batches have expanded published jokes list
+  const [expandedBatchIds, setExpandedBatchIds] = useState<Record<string, boolean>>({});
   const profit =
     profitNum !== null && Number.isFinite(profitNum)
       ? `$${profitNum.toFixed(2)}`
@@ -265,7 +266,7 @@ const QualityControl: React.FC = () => {
 
         {/* Right Column: Stats & Queue List */}
         <div className="space-y-6">
-          <PerformanceToggle label={(teamSummary as any)?.performance_label} />
+          <PerformanceToggle label={totalSales > 0 ? (teamSummary as any)?.performance_label : undefined} />
           <div className="grid grid-cols-2 gap-4">
             <StatBox label="Current Rank" value={myRank} color="bg-green-100 text-green-900 border-2 border-green-400 shadow-md" />
             <StatBox
@@ -325,54 +326,93 @@ const QualityControl: React.FC = () => {
           <Card title="Inspection History">
              <div className="space-y-3 max-h-[300px] overflow-y-auto">
                {completedBatches.length === 0 && <p className="text-gray-400 text-sm text-center py-4">No batches rated yet</p>}
-               {[...completedBatches].reverse().map(b => (
-                 <div key={b.id} className="p-3 bg-gray-50 rounded border border-gray-200">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-mono text-xs text-gray-500">#{b.id.slice(-4)}</span>
-                      <span className="text-xs text-green-600 font-bold flex items-center">
-                        <CheckCircle size={10} className="mr-1"/> 
-                        Rated
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div className="bg-white p-1 rounded text-center border">
-                        <span className="block text-gray-500 text-[10px] uppercase">Avg Score</span>
-                        <span className="font-bold text-blue-600">{b.avgRating?.toFixed(1)}</span>
+               {[...completedBatches].reverse().map(b => {
+                 // Filter published jokes: check is_published flag OR sold_count > 0 (for backward compat)
+                 const published = (b.jokes || []).filter(j => {
+                   const isPublished = Boolean((j as any)?.is_published ?? (j as any)?.isPublished ?? false);
+                   const sold = Number((j as any)?.sold_count ?? (j as any)?.soldCount ?? 0);
+                   return isPublished || sold > 0;
+                 });
+                 const isExpanded = Boolean(expandedBatchIds[b.id]);
+                 const maxVisible = 2;
+                 const hasMore = published.length > maxVisible;
+                 const visibleJokes = isExpanded ? published : published.slice(0, maxVisible);
+                 
+                 return (
+                   <div key={b.id} className="p-3 bg-gray-50 rounded border border-gray-200">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="font-mono text-xs text-gray-500">#{b.id.slice(-4)}</span>
+                        <span className="text-xs text-green-600 font-bold flex items-center">
+                          <CheckCircle size={10} className="mr-1"/> 
+                          Rated
+                        </span>
                       </div>
-                      <div className="bg-white p-1 rounded text-center border">
-                        <span className="block text-gray-500 text-[10px] uppercase">Accepted</span>
-                        <span className="font-bold text-green-600">{b.acceptedCount}</span>
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <div className="bg-white p-1 rounded text-center border">
+                          <span className="block text-gray-500 text-[10px] uppercase">Avg Score</span>
+                          <span className="font-bold text-blue-600">{b.avgRating?.toFixed(1)}</span>
+                        </div>
+                        <div className="bg-white p-1 rounded text-center border">
+                          <span className="block text-gray-500 text-[10px] uppercase">Accepted</span>
+                          <span className="font-bold text-green-600">{b.acceptedCount}</span>
+                        </div>
                       </div>
-                    </div>
-                    {/* Accepted / Published jokes with sales */}
-                    <div className="mt-3 bg-white border border-gray-200 rounded p-2">
-                      <span className="text-[11px] font-semibold text-gray-500 uppercase block mb-1">Published Jokes</span>
-                      {(() => {
-                        const published = (b.jokes || []).filter(j => {
-                          const sold = Number((j as any)?.sold_count ?? (j as any)?.soldCount ?? 0);
-                          const bought = Boolean((j as any)?.is_bought ?? (j as any)?.isBought ?? false);
-                          return sold > 0 || bought;
-                        });
-                        if (!published.length) {
-                          return <span className="text-xs text-gray-400">None</span>;
-                        }
-                        return (
-                          <ul className="space-y-1">
-                            {published.map(j => {
-                              const sold = Number((j as any)?.sold_count ?? (j as any)?.soldCount ?? 0);
-                              return (
-                                <li key={j.id} className="text-xs text-gray-800 flex justify-between gap-2">
-                                  <span className="line-clamp-2">{j.content}</span>
-                                  <span className="text-[11px] text-green-700 font-semibold shrink-0">Sold: {sold}</span>
-                                </li>
-                              );
-                            })}
-                          </ul>
-                        );
-                      })()}
-                    </div>
-                 </div>
-               ))}
+                      {/* Published jokes with sales - with fold/expand */}
+                      <div className="mt-3 bg-white border border-gray-200 rounded p-2">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-[11px] font-semibold text-gray-500 uppercase">
+                            Published ({published.length})
+                          </span>
+                          {published.length > 0 && (
+                            <span className="text-[10px] text-emerald-700 font-bold">
+                              Total Sold: {published.reduce((sum, j) => sum + Number((j as any)?.sold_count ?? (j as any)?.soldCount ?? 0), 0)}
+                            </span>
+                          )}
+                        </div>
+                        {published.length === 0 ? (
+                          <span className="text-xs text-gray-400">None published yet</span>
+                        ) : (
+                          <>
+                            <ul className="space-y-1.5">
+                              {visibleJokes.map(j => {
+                                const sold = Number((j as any)?.sold_count ?? (j as any)?.soldCount ?? 0);
+                                return (
+                                  <li key={j.id} className="text-xs text-gray-800 flex justify-between gap-2 bg-gray-50 p-1.5 rounded">
+                                    <span className="line-clamp-2 flex-1">{j.content}</span>
+                                    <span className={`text-[11px] font-semibold shrink-0 px-1.5 py-0.5 rounded ${
+                                      sold > 0 ? 'bg-emerald-100 text-emerald-800' : 'bg-gray-100 text-gray-600'
+                                    }`}>
+                                      {sold > 0 ? `🛒 ${sold}` : '—'}
+                                    </span>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                            {hasMore && (
+                              <button
+                                type="button"
+                                onClick={() => setExpandedBatchIds(prev => ({ ...prev, [b.id]: !prev[b.id] }))}
+                                className="mt-2 w-full flex items-center justify-center gap-1 text-[11px] font-semibold text-purple-600 hover:text-purple-800 transition-colors py-1 bg-purple-50 rounded"
+                              >
+                                {isExpanded ? (
+                                  <>
+                                    <ChevronUp size={12} />
+                                    Show Less
+                                  </>
+                                ) : (
+                                  <>
+                                    <ChevronDown size={12} />
+                                    Show All ({published.length - maxVisible} more)
+                                  </>
+                                )}
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+                   </div>
+                 );
+               })}
              </div>
           </Card>
         </div>
