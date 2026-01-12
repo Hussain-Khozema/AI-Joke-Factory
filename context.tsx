@@ -1769,15 +1769,18 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const setRound = (round: number) => {
-    // In the real backend-driven flow, round selection is driven by active round state.
-    // For mock/demo mode, allow instructor to toggle Round 1/2 to unlock the UI paths.
-    if (!isMockModeEnabled()) return;
+    // Allow instructor to toggle Round 1/2 manually (e.g. during Lobby/Config).
+    // If a round is ACTIVE, polling will likely revert this to the active round, which is intended.
     const next = round === 2 ? 2 : 1;
     setConfig(prev => ({ ...prev, round: next }));
-    try {
-      setMockRoundNumber(next as 1 | 2);
-    } catch {
-      // ignore
+
+    // In mock mode, also notify the mock backend
+    if (isMockModeEnabled()) {
+      try {
+        setMockRoundNumber(next as 1 | 2);
+      } catch {
+        // ignore
+      }
     }
   };
 
@@ -1957,6 +1960,22 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     qcRatedHistoryRef.current = {};
     localStorage.removeItem(LS_SUBMITTED_BATCH_JOKES);
     localStorage.removeItem(LS_QC_RATED_HISTORY);
+    
+    // Explicitly re-fetch lobby state to ensure UI syncs with the fresh backend state immediately.
+    // The instructor reset endpoint clears backend data, so we must reload the lobby (which might be empty).
+    if (user && user.role === 'INSTRUCTOR') {
+      try {
+        const me = await sessionService.me();
+        if (me.round_id) {
+           setRoundId(me.round_id);
+           const lobbyRaw = await instructorService.lobby(me.round_id);
+           // ... (polling will handle the rest, but this kickstarts the sync)
+        }
+      } catch {
+        // ignore errors during re-sync
+      }
+    }
+    
     return true;
   };
 

@@ -1693,7 +1693,7 @@ const Instructor: React.FC = () => {
                 <label className="text-sm text-gray-600 whitespace-nowrap">Market Price (p):</label>
                 <input
                   type="number"
-                  step="0.01"
+                  step="0.10"
                   min="0"
                   value={localMarketPrice}
                   onChange={e => setLocalMarketPrice(Number(e.target.value))}
