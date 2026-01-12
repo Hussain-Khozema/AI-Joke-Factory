@@ -55,7 +55,7 @@ const Instructor: React.FC = () => {
   const [hiddenCharts, setHiddenCharts] = useState<ChartKey[]>([]);
   const [deletingUserIds, setDeletingUserIds] = useState<string[]>([]);
   const [leaderboardSortKey, setLeaderboardSortKey] = useState<
-    'team' | 'rated_batches' | 'accepted_jokes' | 'unsold_jokes' | 'total_jokes' | 'avg_score_overall' | 'total_sales' | 'profit'
+    'team' | 'rated_batches' | 'accepted_jokes' | 'unaccepted_jokes' | 'unsold_jokes' | 'total_jokes' | 'avg_score_overall' | 'total_sales' | 'profit'
   >('profit');
   const [leaderboardSortDir, setLeaderboardSortDir] = useState<'asc' | 'desc'>('desc');
   const [rankUpTeamIds, setRankUpTeamIds] = useState<string[]>([]);
@@ -64,6 +64,7 @@ const Instructor: React.FC = () => {
   const [marketSortKey, setMarketSortKey] = useState<'id' | 'sales'>('id');
   const [marketSortDir, setMarketSortDir] = useState<'asc' | 'desc'>('desc');
   const [expandedMarketJokeIds, setExpandedMarketJokeIds] = useState<Record<string, boolean>>({});
+  const [wasteChartMode, setWasteChartMode] = useState<'count' | 'rate'>('count');
   const [round2ResumeHint, setRound2ResumeHint] = useState(false);
   const [localSalesOverTime, setLocalSalesOverTime] = useState<
     Array<{ event_index: number; timestamp: string; team_id: number; team_name: string; total_sales: number }>
@@ -197,6 +198,7 @@ const Instructor: React.FC = () => {
       team_name: teamName,
       rated_batches: Number(row.batches_rated ?? 0),
       accepted_jokes: Number(row.accepted_jokes ?? 0),
+      unaccepted_jokes: Number((row as any).unaccepted_jokes ?? 0),
       unsold_jokes: Number((row as any).unsold_jokes ?? 0),
         total_jokes: Number(row.total_jokes ?? 0),
       avg_score_overall: Number(row.avg_score_overall ?? 0),
@@ -221,6 +223,20 @@ const Instructor: React.FC = () => {
     });
     return out;
   }, [statsR1?.leaderboard]);
+
+  const wasteChartData = useMemo(() => {
+    const src =
+      (instructorStats?.rejection_by_team as any[]) ??
+      (statsR2?.rejection_by_team as any[]) ??
+      (statsR1?.rejection_by_team as any[]) ??
+      [];
+    return (src || []).map((row: any) => ({
+      team_id: String(row.team_id),
+      team_name: teamNames[String(row.team_id)] || row.team_name || `Team ${row.team_id}`,
+      wasted: Number(row.unaccepted_jokes ?? 0),
+      rate: Number(row.rejection_rate ?? 0),
+    }));
+  }, [instructorStats?.rejection_by_team, statsR1?.rejection_by_team, statsR2?.rejection_by_team, teamNames]);
   const avgQualityR2ByTeamId = useMemo(() => {
     const out: Record<string, number> = {};
     (statsR2?.leaderboard ?? []).forEach(row => {
@@ -563,6 +579,22 @@ const Instructor: React.FC = () => {
                   type="button"
                   className="inline-flex items-center hover:text-gray-800"
                   onClick={() => {
+                  setLeaderboardSortKey('unaccepted_jokes');
+                  setLeaderboardSortDir(prev => (leaderboardSortKey === 'unaccepted_jokes' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
+                  }}
+                  title="Sort by Wasted Jokes"
+                >
+                  <span>Wasted Jokes</span>
+                  <span className="ml-1 w-3 text-center">
+                    {leaderboardSortKey === 'unaccepted_jokes' ? (leaderboardSortDir === 'asc' ? '▲' : '▼') : ''}
+                  </span>
+                </button>
+              </th>
+              <th className="px-3 py-2 text-right font-medium text-gray-500">
+                <button
+                  type="button"
+                  className="inline-flex items-center hover:text-gray-800"
+                  onClick={() => {
                     setLeaderboardSortKey('unsold_jokes');
                     setLeaderboardSortDir(prev => (leaderboardSortKey === 'unsold_jokes' ? (prev === 'asc' ? 'desc' : 'asc') : 'desc'));
                   }}
@@ -643,7 +675,7 @@ const Instructor: React.FC = () => {
           <tbody className="divide-y divide-gray-100">
             {leaderboardSorted.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-3 py-6 text-center text-gray-400 italic">
+                <td colSpan={10} className="px-3 py-6 text-center text-gray-400 italic">
                   No leaderboard data yet.
                 </td>
               </tr>
@@ -657,6 +689,7 @@ const Instructor: React.FC = () => {
                 <td className="px-3 py-2 font-semibold text-gray-900">{row.team_name}</td>
                 <td className="px-3 py-2 text-right text-gray-800">{row.rated_batches}</td>
                 <td className="px-3 py-2 text-right text-gray-800">{row.accepted_jokes}</td>
+                <td className="px-3 py-2 text-right text-gray-800">{row.unaccepted_jokes}</td>
                 <td className="px-3 py-2 text-right text-gray-800">{row.unsold_jokes}</td>
                 <td className="px-3 py-2 text-right text-gray-800">{row.total_jokes}</td>
                 <td className="px-3 py-2 text-right text-gray-800">{row.avg_score_overall.toFixed(1)}</td>
@@ -1630,72 +1663,70 @@ const Instructor: React.FC = () => {
               </div>
             )}
             
-            {/* Row 3: Configurations */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
-               <div className="flex items-center space-x-2">
-                 <Settings size={16} className="text-gray-400" />
-                 <span className="text-sm font-bold text-gray-700 uppercase">Config:</span>
-               </div>
-               <div className="flex items-center space-x-2">
-                 <label className="text-sm text-gray-600">R1 Batch Size:</label>
-                 <input 
-                   type="number" 
-                   value={localBatchSize} 
-                   onChange={e => setLocalBatchSize(Number(e.target.value))}
-                   disabled={!canEditBatchSize}
-                   className={`w-16 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditBatchSize ? 'opacity-50 cursor-not-allowed' : ''}`}
-                 />
-               </div>
-               <div className="flex items-center space-x-2">
-                 <label className="text-sm text-gray-600">Cust. Budget:</label>
-                 <input 
-                   type="number" 
-                   value={localBudget} 
-                   onChange={e => setLocalBudget(Number(e.target.value))}
-                   disabled={!canEditBudget}
-                   className={`w-16 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditBudget ? 'opacity-50 cursor-not-allowed' : ''}`}
-                 />
-               </div>
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <label className="text-sm text-gray-600">Market Price (p):</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={localMarketPrice}
-                    onChange={e => setLocalMarketPrice(Number(e.target.value))}
-                    disabled={!canEditPricing}
-                    className={`w-24 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditPricing ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  />
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-sm text-gray-600 whitespace-nowrap">Cost of Publishing (c):</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={localCostOfPublishing}
-                    onChange={e => setLocalCostOfPublishing(Number(e.target.value))}
-                    disabled={!canEditPricing}
-                    className={`w-24 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditPricing ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  />
-                </div>
-                 <Button
-                   type="button"
-                   onClick={handleUpdateSettings}
-                   variant="secondary"
-                   disabled={!hasPendingConfigChanges}
-                   className={
-                     `ml-2 px-4 py-1 text-xs font-semibold transition-colors ` +
-                     (hasPendingConfigChanges
-                       ? 'bg-amber-100 text-amber-900 hover:bg-amber-200 ring-2 ring-amber-200'
-                       : 'opacity-60')
-                   }
-                 >
-                   Apply
-                 </Button>
-               </div>
+            {/* Row 3: Configurations (single line, wrap on narrow screens) */}
+            <div className="flex flex-wrap items-center gap-6 bg-gray-50 p-4 rounded-lg border border-gray-200">
+              <div className="flex items-center space-x-3">
+                <Settings size={16} className="text-gray-400" />
+                <span className="text-sm font-bold text-gray-700 uppercase">Config:</span>
+              </div>
+              <div className="flex items-center space-x-3">
+                <label className="text-sm text-gray-600 whitespace-nowrap">R1 Batch Size:</label>
+                <input
+                  type="number"
+                  value={localBatchSize}
+                  onChange={e => setLocalBatchSize(Number(e.target.value))}
+                  disabled={!canEditBatchSize}
+                  className={`w-16 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditBatchSize ? 'opacity-50 cursor-not-allowed' : ''}`}
+                />
+              </div>
+              <div className="flex items-center space-x-3">
+                <label className="text-sm text-gray-600 whitespace-nowrap">Cust. Budget:</label>
+                <input
+                  type="number"
+                  value={localBudget}
+                  onChange={e => setLocalBudget(Number(e.target.value))}
+                  disabled={!canEditBudget}
+                  className={`w-16 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditBudget ? 'opacity-50 cursor-not-allowed' : ''}`}
+                />
+              </div>
+              <div className="flex items-center space-x-3">
+                <label className="text-sm text-gray-600 whitespace-nowrap">Market Price (p):</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={localMarketPrice}
+                  onChange={e => setLocalMarketPrice(Number(e.target.value))}
+                  disabled={!canEditPricing}
+                  className={`w-24 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditPricing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                />
+              </div>
+              <div className="flex items-center space-x-3">
+                <label className="text-sm text-gray-600 whitespace-nowrap">Cost of Publishing (c):</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={localCostOfPublishing}
+                  onChange={e => setLocalCostOfPublishing(Number(e.target.value))}
+                  disabled={!canEditPricing}
+                  className={`w-24 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditPricing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                />
+              </div>
+              <Button
+                type="button"
+                onClick={handleUpdateSettings}
+                variant="secondary"
+                disabled={!hasPendingConfigChanges}
+                className={
+                  `px-4 py-1 text-xs font-semibold transition-colors ` +
+                  (hasPendingConfigChanges
+                    ? 'bg-amber-100 text-amber-900 hover:bg-amber-200 ring-2 ring-amber-200'
+                    : 'opacity-60')
+                }
+              >
+                Apply
+              </Button>
             </div>
           </div>
         </Card>
@@ -2031,9 +2062,80 @@ const Instructor: React.FC = () => {
             </Card>
           )}
 
+          {/* Wasted Jokes / Rejection Rate (full width) */}
+          <Card
+            title="Wasted Jokes"
+            action={
+              <div className="flex rounded border border-gray-200 overflow-hidden text-xs">
+                <button
+                  className={`px-3 py-1 ${wasteChartMode === 'count' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}`}
+                  onClick={() => setWasteChartMode('count')}
+                >
+                  Count
+                </button>
+                <button
+                  className={`px-3 py-1 ${wasteChartMode === 'rate' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700'}`}
+                  onClick={() => setWasteChartMode('rate')}
+                >
+                  Rejection Rate
+                </button>
+              </div>
+            }
+            className="xl:col-span-2"
+          >
+            <div className="h-80">
+              <ResponsiveContainer>
+                <BarChart
+                  data={wasteChartData.map(item => ({
+                    team: item.team_name,
+                    value: wasteChartMode === 'count' ? item.wasted : item.rate,
+                  }))}
+                  margin={{ top: 10, right: 20, left: 0, bottom: 30 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="team" angle={-15} textAnchor="end" height={50} />
+                  <YAxis
+                    label={{
+                      value: wasteChartMode === 'rate' ? 'Rejection Rate' : 'Wasted Jokes',
+                      angle: -90,
+                      position: 'insideLeft',
+                      style: { textAnchor: 'middle' },
+                      offset: 10,
+                    }}
+                    tickFormatter={(v) => wasteChartMode === 'rate' ? `${Math.round(v * 100)}%` : v}
+                    domain={(() => {
+                      const maxVal = Math.max(...wasteChartData.map(d => wasteChartMode === 'count' ? d.wasted : d.rate), 0);
+                      if (maxVal <= 0) return wasteChartMode === 'rate' ? [0, 0.25] : [0, 25];
+                      const targetMax = maxVal * 1.25; // make highest bar ~4/5 of axis
+                      const step = wasteChartMode === 'rate' ? 0.05 : 5;
+                      const roundedMax = Math.ceil(targetMax / step) * step;
+                      return [0, roundedMax];
+                    })()}
+                    ticks={(() => {
+                      const [min, max] = (() => {
+                        const maxVal = Math.max(...wasteChartData.map(d => wasteChartMode === 'count' ? d.wasted : d.rate), 0);
+                        if (maxVal <= 0) return wasteChartMode === 'rate' ? [0, 0.25] : [0, 25];
+                        const targetMax = maxVal * 1.25;
+                        const step = wasteChartMode === 'rate' ? 0.05 : 5;
+                        const roundedMax = Math.ceil(targetMax / step) * step;
+                        return [0, roundedMax];
+                      })();
+                      const step = wasteChartMode === 'rate' ? 0.05 : 5;
+                      const ticks: number[] = [];
+                      for (let t = min; t <= max; t += step) ticks.push(t);
+                      return ticks;
+                    })()}
+                  />
+                  <Tooltip formatter={(v: any) => wasteChartMode === 'rate' ? `${(Number(v) * 100).toFixed(1)}%` : v} />
+                  <Bar dataKey="value" name={wasteChartMode === 'count' ? 'Wasted Jokes' : 'Rejection Rate'} fill="#2563eb" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+
           {/* Live Market (Instructor view) */}
-          <Card title="Live Market" className="xl:col-span-2">
-            <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
+          <Card title="Live Market" className="xl:col-span-2 mb-8">
+            <div className="overflow-x-auto max-h-[420px] overflow-y-auto pb-6">
               <table className="min-w-full text-sm table-fixed">
                 <thead className="sticky top-0 bg-white shadow-sm z-10">
                   <tr className="bg-gray-50 border-b">
@@ -2104,6 +2206,12 @@ const Instructor: React.FC = () => {
                       return dir * (a.joke_id - b.joke_id);
                     });
 
+                    const pageSize = 20;
+                    const [page] = [Math.max(1, Math.min(pageSize, pageSize))]; // placeholder to avoid lint
+                    const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+                    const [currentPage, setCurrentPage] = React.useState(1);
+                    const paged = rows.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
                     if (rows.length === 0) {
                       return (
                         <tr>
@@ -2113,7 +2221,9 @@ const Instructor: React.FC = () => {
                         </tr>
                       );
                     }
-                    return rows.map(r => {
+                    return (
+                      <>
+                        {paged.map(r => {
                       const id = String(r.joke_id);
                       const isExpanded = Boolean(expandedMarketJokeIds[id]);
                       const isLong = r.joke_text.trim().length > 180;
@@ -2147,8 +2257,37 @@ const Instructor: React.FC = () => {
                             {r.bought_count}
                           </td>
                         </tr>
-                      );
-                    });
+                        );
+                        })}
+                        {totalPages > 1 && (
+                          <tr>
+                            <td colSpan={3} className="px-3 py-3">
+                              <div className="flex items-center justify-between text-xs text-gray-600">
+                                <button
+                                  type="button"
+                                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                                  disabled={currentPage === 1}
+                                  className="px-2 py-1 rounded border border-gray-300 bg-white disabled:opacity-50"
+                                >
+                                  Prev
+                                </button>
+                                <span className="font-semibold">
+                                  Page {currentPage} / {totalPages}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                                  disabled={currentPage === totalPages}
+                                  className="px-2 py-1 rounded border border-gray-300 bg-white disabled:opacity-50"
+                                >
+                                  Next
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </>
+                    );
                   })()}
                 </tbody>
               </table>
