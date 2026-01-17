@@ -184,7 +184,12 @@ const QualityControl: React.FC = () => {
     const allRated = batch.jokes.every(j => currentRatings[j.id] !== undefined);
     const allTagged = batch.jokes.every(j => currentTags[j.id] && currentTags[j.id].length > 0);
     const feedbackValid = !needsFeedback || (batchFeedback.trim().length > 0);
-    return allRated && allTagged && feedbackValid;
+    const titlesValid = batch.jokes.every(j => {
+      if (currentRatings[j.id] !== 5) return true;
+      // validateTitle returns non-null string if invalid
+      return !validateTitle(jokeTitles[j.id] ?? '');
+    });
+    return allRated && allTagged && feedbackValid && titlesValid;
   };
 
   useEffect(() => {
@@ -296,7 +301,10 @@ const QualityControl: React.FC = () => {
                              type="text"
                              value={titleValue}
                              onChange={(e) => {
-                               setJokeTitles(prev => ({ ...prev, [joke.id]: e.target.value }));
+                               const val = e.target.value;
+                               // Prevent typing more than max words
+                               if (countWords(val) > TITLE_MAX_WORDS) return;
+                               setJokeTitles(prev => ({ ...prev, [joke.id]: val }));
                                if (submitError) setSubmitError(null);
                              }}
                              maxLength={TITLE_MAX_CHARS}

@@ -149,20 +149,14 @@ const Customer: React.FC = () => {
                             </span>
                           </div>
                           <div className="absolute right-0 top-0 flex items-center gap-2">
-                            {isOwned && (
-                              <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-400">
-                                <RotateCcw size={12} />
-                                Owned
-                              </span>
-                            )}
                             {isOwned ? (
                               <Button
                                 onClick={() => handleReturn(joke.id)}
-                                variant="secondary"
-                                className="h-10 w-32 text-sm flex items-center justify-center space-x-1.5 text-blue-600 border border-blue-200 bg-white hover:bg-blue-50"
+                                variant="danger"
+                                className="h-11 w-36 text-base flex items-center justify-center space-x-2 bg-red-600 hover:bg-red-700"
                               >
                                 <RotateCcw size={16} />
-                                <span>Return {priceDisplay}</span>
+                                <span>Return</span>
                               </Button>
                             ) : (
                               <Button

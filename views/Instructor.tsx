@@ -42,9 +42,16 @@ const Instructor: React.FC = () => {
 
   // Expanded Chart State
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
-  const [salesTab, setSalesTab] = useState<'R1' | 'R2' | 'BOTH'>('R2');
-  const [sequenceTab, setSequenceTab] = useState<'R1' | 'R2' | 'BOTH'>('R2');
-  const [unratedTab, setUnratedTab] = useState<'R1' | 'R2' | 'BOTH'>('R2');
+  
+  // Helper to determine default round view
+  const getDefaultRoundMode = () => {
+    if (config.round === 2 && !config.isActive) return 'BOTH';
+    return config.round === 2 ? 'R2' : 'R1';
+  };
+
+  const [salesTab, setSalesTab] = useState<'R1' | 'R2' | 'BOTH'>(getDefaultRoundMode());
+  const [sequenceTab, setSequenceTab] = useState<'R1' | 'R2' | 'BOTH'>(getDefaultRoundMode());
+  const [unratedTab, setUnratedTab] = useState<'R1' | 'R2' | 'BOTH'>(getDefaultRoundMode());
   const [salesTeamFilter, setSalesTeamFilter] = useState<string>('ALL');
   const [sequenceTeamFilter, setSequenceTeamFilter] = useState<string>('ALL');
   const [unratedTeamFilter, setUnratedTeamFilter] = useState<string>('ALL');
@@ -58,7 +65,7 @@ const Instructor: React.FC = () => {
   const [scatterYMetric, setScatterYMetric] = useState<string>('profit');
   const [scatterNumerator, setScatterNumerator] = useState<string>('profit');
   const [scatterDenominator, setScatterDenominator] = useState<string>('total_jokes');
-  const [scatterRoundMode, setScatterRoundMode] = useState<'R1' | 'R2' | 'BOTH'>('R2');
+  const [scatterRoundMode, setScatterRoundMode] = useState<'R1' | 'R2' | 'BOTH'>(getDefaultRoundMode());
 
   // Session-only chart visibility (defaults back on new browser session)
   const [hiddenCharts, setHiddenCharts] = useState<ChartKey[]>([]);
@@ -176,14 +183,18 @@ const Instructor: React.FC = () => {
 
   // --- Data Processing ---
 
-  // Keep tab defaults aligned to current round (but only when user hasn't explicitly selected otherwise).
+  // Keep tab defaults aligned to current round logic.
   useEffect(() => {
-    const r = (config.round === 2 ? 2 : 1) as 1 | 2;
-    setSalesTab(prev => (prev === 'BOTH' ? prev : (r === 1 ? 'R1' : 'R2')));
-    setSequenceTab(prev => (prev === 'BOTH' ? prev : (r === 1 ? 'R1' : 'R2')));
-    setUnratedTab(prev => (prev === 'BOTH' ? prev : (r === 1 ? 'R1' : 'R2')));
-    if (!leaderboardRoundTouchedRef.current) setLeaderboardRoundTab(r);
-  }, [config.round]);
+    const defaultMode = getDefaultRoundMode();
+    setSalesTab(defaultMode);
+    setSequenceTab(defaultMode);
+    setUnratedTab(defaultMode);
+    setScatterRoundMode(defaultMode);
+    
+    if (!leaderboardRoundTouchedRef.current) {
+      setLeaderboardRoundTab((config.round === 2 ? 2 : 1) as 1 | 2);
+    }
+  }, [config.round, config.isActive]);
 
   // Clear "resume" hint once Round 2 becomes active or user switches away from Round 2.
   useEffect(() => {
@@ -1783,7 +1794,7 @@ const Instructor: React.FC = () => {
                <ResponsiveContainer width="100%" height="100%">
                  <LineChart data={unratedJokesOverTimeData} margin={{ top: 12, bottom: 20, left: 48, right: isExpanded ? 24 : 16 }}>
                    <CartesianGrid strokeDasharray="3 3" />
-                   <XAxis dataKey="index" label={{ value: 'Batch Sequence', position: 'insideBottom', offset: -10 }} />
+                   <XAxis dataKey="index" label={{ value: 'Time Elapsed', position: 'insideBottom', offset: -10 }} />
                    <YAxis
                      width={44}
                      allowDecimals={false}

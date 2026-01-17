@@ -159,7 +159,7 @@ export const PerformanceToggle: React.FC<{ label?: string }> = ({ label }) => {
                 <Info size={14} />
               </span>
             </div>
-            <div className="flip-card-face flip-card-back flex items-center text-[13px] font-semibold text-gray-600">
+            <div className="flip-card-face flip-card-back flex items-center text-[13px] font-semibold text-gray-600" style={{ transform: 'rotateX(180deg)' }}>
               <span>
                 Market Position shown to customers:
                 <br />
