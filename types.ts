@@ -244,7 +244,7 @@ export interface ApiQcQueueCountResponse {
 }
 
 export interface ApiQcSubmitRatingsRequest {
-  ratings: Array<{ joke_id: JokeId; rating: number; tag: string }>;
+  ratings: Array<{ joke_id: JokeId; rating: number; tag: string; joke_title?: string }>;
   feedback?: string;
 }
 
@@ -255,6 +255,7 @@ export interface ApiQcSubmitRatingsResponse {
 
 export interface ApiMarketItem {
   joke_id: JokeId;
+  joke_title?: string;
   joke_text: string;
   team: Team;
   is_bought_by_me: boolean;
@@ -300,6 +301,7 @@ export interface ApiInstructorStatsResponse {
     points: number;
     total_sales: number;
     unsold_jokes: number;
+    unaccepted_jokes: number;
     batches_rated: number;
     profit: number;
     total_jokes: number;
@@ -312,6 +314,13 @@ export interface ApiInstructorStatsResponse {
     team_id: TeamId;
     team_name: string;
     total_sales: number;
+  }>;
+  unrated_jokes_over_time: Array<{
+    team_event_index: number;
+    timestamp: string;
+    team_id: TeamId;
+    team_name: string;
+    queue_count: number;
   }>;
   batch_quality_by_size: Array<{
     batch_id: BatchId;

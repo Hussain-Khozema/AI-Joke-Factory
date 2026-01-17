@@ -10,18 +10,26 @@ import { Loader2 } from 'lucide-react';
 
 const LoginScreen: React.FC = () => {
   const { login, instructorLogin } = useGame();
-  const [name, setName] = useState('');
+  const [member1, setMember1] = useState('');
+  const [member2, setMember2] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [activeTab, setActiveTab] = useState<'STUDENT' | 'INSTRUCTOR'>('STUDENT');
 
+  const normalizeTeamName = (a: string, b: string) =>
+    [a, b]
+      .map(n => n.trim().toLowerCase())
+      .filter(Boolean)
+      .sort((x, y) => x.localeCompare(y))
+      .join('_');
+
   const handleStudentLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (name.trim()) {
-      // Students join as UNASSIGNED pairs initially
-      await login(name, Role.UNASSIGNED);
-    }
+    const normalized = normalizeTeamName(member1, member2);
+    if (!normalized) return;
+    // Students join as UNASSIGNED pairs initially
+    await login(normalized, Role.UNASSIGNED);
   };
 
   const handleInstructorLogin = async (e: React.FormEvent) => {
@@ -63,17 +71,31 @@ const LoginScreen: React.FC = () => {
         <div className="p-8 bg-gray-50/50">
           {activeTab === 'STUDENT' ? (
             <form onSubmit={handleStudentLogin} className="space-y-6">
-              <div>
-                <label className="block text-sm font-semibold text-gray-900 mb-2">Your Names (Pair)</label>
-                <input 
-                  required
-                  type="text" 
-                  className="w-full bg-white border border-gray-300 rounded-lg px-4 py-2.5 text-gray-900 focus:ring-2 focus:ring-blue-600 focus:border-blue-600 outline-none transition-all placeholder-gray-400"
-                  value={name}
-                  onChange={e => setName(e.target.value)}
-                  placeholder="e.g. John_Joe"
-                />
-                <p className="text-xs text-gray-500 mt-1">Enter both students who will share this role.</p>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-semibold text-gray-900 mb-2">Team Members</label>
+                  <input
+                    required
+                    type="text"
+                    className="w-full bg-white border border-gray-300 rounded-lg px-4 py-2.5 text-gray-900 focus:ring-2 focus:ring-blue-600 focus:border-blue-600 outline-none transition-all placeholder-gray-400"
+                    value={member1}
+                    onChange={e => setMember1(e.target.value)}
+                    placeholder="Member 1 (e.g. Joe)"
+                  />
+                </div>
+                <div>
+                  <input
+                    required
+                    type="text"
+                    className="w-full bg-white border border-gray-300 rounded-lg px-4 py-2.5 text-gray-900 focus:ring-2 focus:ring-blue-600 focus:border-blue-600 outline-none transition-all placeholder-gray-400"
+                    value={member2}
+                    onChange={e => setMember2(e.target.value)}
+                    placeholder="Member 2 (e.g. John)"
+                  />
+                </div>
+                <p className="text-xs text-gray-500">
+                    You and your partner will share one role (JM or QC)
+                </p>
               </div>
               <Button type="submit" className="w-full justify-center py-3 text-base font-semibold">Join Lobby</Button>
             </form>

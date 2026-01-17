@@ -55,12 +55,17 @@ const QualityControl: React.FC = () => {
     submittedAt: Date.parse(qcQueue.batch.submitted_at),
   }] : [];
 
-  const completedBatches = batches.filter(b => b.team === user?.team && b.status === 'RATED');
+  const completedBatches = batches.filter(
+    b => b.team === user?.team && b.status === 'RATED' && b.round === config.round,
+  );
   
   const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
   const [currentRatings, setCurrentRatings] = useState<{ [jokeId: string]: number }>({});
   const [currentTags, setCurrentTags] = useState<{ [jokeId: string]: string[] }>({});
   const [batchFeedback, setBatchFeedback] = useState("");
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [jokeTitles, setJokeTitles] = useState<Record<string, string>>({});
+  const jokeCardRefs = React.useRef<Record<string, HTMLDivElement | null>>({});
   const [dismissedTeamPopup, setDismissedTeamPopup] = useState(false);
   const activeBatch = pendingBatches.find(b => b.id === activeBatchId) || pendingBatches[0];
 
@@ -75,6 +80,7 @@ const QualityControl: React.FC = () => {
   const myRank = typeof (teamSummary as any)?.rank === 'number' ? String((teamSummary as any).rank) : '-';
   const perfTag = performanceTagUi((teamSummary as any)?.performance_label);
   const totalSales = typeof (teamSummary as any)?.total_sales === 'number' ? Number((teamSummary as any).total_sales) : 0;
+  const soldJokesCount = Number((teamSummary as any)?.sold_jokes_count ?? totalSales ?? 0);
   const profitNum = typeof (teamSummary as any)?.profit === 'number' ? Number((teamSummary as any).profit) : null;
   // Use config (from active round API) for market_price and cost_of_publishing
   const marketPrice = typeof config.marketPrice === 'number' && config.marketPrice > 0 ? config.marketPrice : null;
@@ -101,6 +107,7 @@ const QualityControl: React.FC = () => {
 
   const handleRate = (jokeId: string, rating: number) => {
     setCurrentRatings(prev => ({ ...prev, [jokeId]: rating }));
+    if (submitError) setSubmitError(null);
   };
 
   const toggleTag = (jokeId: string, tagLabel: string) => {
@@ -110,17 +117,66 @@ const QualityControl: React.FC = () => {
       const next = current.includes(tagLabel) ? [] : [tagLabel];
       return { ...prev, [jokeId]: next };
     });
+    if (submitError) setSubmitError(null);
   };
 
 
   const needsFeedback = Object.values(currentTags).flat().includes("Other");
+  const TITLE_MAX_CHARS = 120;
+  const TITLE_MAX_WORDS = 15;
+  const countWords = (s: string) => {
+    const trimmed = s.trim();
+    if (!trimmed) return 0;
+    return trimmed.split(/\s+/).filter(Boolean).length;
+  };
+  const validateTitle = (title: string): string | null => {
+    const trimmed = title.trim();
+    if (!trimmed) return 'Title required for submitting jokes.';
+    if (trimmed.length > TITLE_MAX_CHARS) return `Title too long (max ${TITLE_MAX_CHARS} chars).`;
+    const words = countWords(trimmed);
+    if (words > TITLE_MAX_WORDS) return `Title too long (max ${TITLE_MAX_WORDS} words).`;
+    return null;
+  };
 
   const submitBatchRating = () => {
     if (!activeBatch) return;
-    rateBatch(activeBatch.id, currentRatings, currentTags, batchFeedback);
+    if (!isBatchFullyRated(activeBatch)) {
+      if (needsFeedback && batchFeedback.trim().length === 0) {
+        setSubmitError('Written feedback is required when you select "Other". Please add feedback before submitting.');
+        return;
+      }
+      const missingRating = activeBatch.jokes.find(j => currentRatings[j.id] === undefined);
+      const missingTag = activeBatch.jokes.find(j => !(currentTags[j.id] && currentTags[j.id].length > 0));
+      const missingTitle = activeBatch.jokes.find(j => {
+        if (currentRatings[j.id] !== 5) return false;
+        return Boolean(validateTitle(jokeTitles[j.id] ?? ''));
+      });
+      const target = missingRating ?? missingTag ?? null;
+      if (target) {
+        const targetIndex = activeBatch.jokes.findIndex(j => j.id === target.id);
+        const targetLabel = target ? `Joke ${targetIndex + 1}` : 'a joke';
+        const missingType = missingRating ? 'rating' : 'tag';
+        setSubmitError(`Missing ${missingType} for ${targetLabel}. Please complete it before submitting.`);
+        const el = target ? jokeCardRefs.current[target.id] : null;
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      if (missingTitle) {
+        const targetIndex = activeBatch.jokes.findIndex(j => j.id === missingTitle.id);
+        const titleError = validateTitle(jokeTitles[missingTitle.id] ?? '') ?? 'Title required.';
+        setSubmitError(`Joke ${targetIndex + 1}: ${titleError}`);
+        const el = jokeCardRefs.current[missingTitle.id];
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+      return;
+    }
+    rateBatch(activeBatch.id, currentRatings, currentTags, batchFeedback, jokeTitles);
     setCurrentRatings({});
     setCurrentTags({});
     setBatchFeedback("");
+    setJokeTitles({});
+    setSubmitError(null);
     setActiveBatchId(null);
   };
 
@@ -172,8 +228,20 @@ const QualityControl: React.FC = () => {
                  </div>
 
                  <div className="space-y-6">
-                   {activeBatch.jokes.map((joke) => (
-                     <div key={joke.id} className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                   {activeBatch.jokes.map((joke, idx) => {
+                     const rating = currentRatings[joke.id];
+                     const requiresTitle = rating === 5;
+                     const titleValue = jokeTitles[joke.id] ?? '';
+                     const titleError = requiresTitle ? validateTitle(titleValue) : null;
+                     const wordCount = countWords(titleValue);
+                     return (
+                     <div
+                       key={joke.id}
+                       ref={(el) => {
+                         jokeCardRefs.current[joke.id] = el;
+                       }}
+                       className="bg-gray-50 p-4 rounded-lg border border-gray-200"
+                     >
                        <p className="mb-3 text-gray-800 font-medium text-lg whitespace-pre-wrap">{joke.content}</p>
                        
                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -219,8 +287,35 @@ const QualityControl: React.FC = () => {
                                 </div>
                            </div>
                        </div>
+                       {requiresTitle && (
+                         <div className="mt-3">
+                           <span className="text-xs font-bold text-gray-400 uppercase block mb-1">
+                             Title / Summary (Market View)
+                           </span>
+                           <input
+                             type="text"
+                             value={titleValue}
+                             onChange={(e) => {
+                               setJokeTitles(prev => ({ ...prev, [joke.id]: e.target.value }));
+                               if (submitError) setSubmitError(null);
+                             }}
+                             maxLength={TITLE_MAX_CHARS}
+                             className={`w-full bg-white border rounded px-3 py-2 text-sm text-gray-900 focus:ring-2 outline-none ${
+                               titleError ? 'border-red-300 focus:ring-red-200' : 'border-gray-300 focus:ring-purple-200'
+                             }`}
+                             placeholder={`Joke ${idx + 1} title (max ${TITLE_MAX_WORDS} words)`}
+                           />
+                           <div className="mt-1 flex items-center justify-between text-[11px]">
+                             <span className={titleError ? 'text-red-600' : 'text-gray-500'}>
+                               {titleError ?? 'Required for accepted jokes shown in market.'}
+                             </span>
+                             <span className="text-gray-400">{wordCount}/{TITLE_MAX_WORDS} words</span>
+                           </div>
+                         </div>
+                       )}
                      </div>
-                   ))}
+                   );
+                   })}
                  </div>
 
                  {/* Conditional Feedback Area */}
@@ -233,7 +328,10 @@ const QualityControl: React.FC = () => {
                         <p className="text-xs text-yellow-700 mb-2">You selected "Other" for one or more jokes. Please explain your feedback for this batch.</p>
                         <textarea 
                             value={batchFeedback}
-                            onChange={(e) => setBatchFeedback(e.target.value)}
+                            onChange={(e) => {
+                              setBatchFeedback(e.target.value);
+                              if (submitError) setSubmitError(null);
+                            }}
                             className="w-full p-2 text-sm border border-yellow-300 rounded focus:ring-2 focus:ring-yellow-500 outline-none bg-white text-gray-900"
                             rows={3}
                             placeholder="Type your feedback here..."
@@ -241,10 +339,14 @@ const QualityControl: React.FC = () => {
                     </div>
                  )}
 
+                 {submitError && (
+                   <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded px-3 py-2">
+                     {submitError}
+                   </div>
+                 )}
                  <div className="flex justify-end pt-4 border-t">
                    <Button 
                      onClick={submitBatchRating}
-                     disabled={!isBatchFullyRated(activeBatch)}
                      variant="success"
                      className="w-full md:w-auto"
                    >
@@ -271,7 +373,7 @@ const QualityControl: React.FC = () => {
             <StatBox label="Current Rank" value={myRank} color="bg-green-100 text-green-900 border-2 border-green-400 shadow-md" />
             <StatBox
               label="Sold / Accepted"
-              value={`${teamSummary?.total_sales ?? 0} / ${teamSummary?.accepted_jokes ?? 0}`}
+              value={`${soldJokesCount} / ${teamSummary?.accepted_jokes ?? 0}`}
               valueClassName="text-blue-900"
               labelClassName="text-blue-900"
             />

@@ -64,7 +64,7 @@ type MockBatch = {
   status: BatchStatus;
   submitted_at: string;
   rated_at?: string;
-  jokes: Array<{ joke_id: JokeId; joke_text: string }>;
+  jokes: Array<{ joke_id: JokeId; joke_text: string; joke_title?: string }>;
   avg_score: number | null;
   passes_count: number | null;
 };
@@ -243,6 +243,7 @@ function getMarketItems(db: MockDb, round_id: RoundId, buyer_user_id: UserId): A
       const team = db.teams.find(t => t.id === batch.team_id) ?? { id: batch.team_id, name: `Team ${batch.team_id}` };
       return {
         joke_id: joke.joke_id,
+        joke_title: (joke as any).joke_title ?? undefined,
         joke_text: joke.joke_text,
         team,
         is_bought_by_me: !!purchase && !purchase.returned_at,
@@ -849,11 +850,14 @@ function route(
 
       // Compute avg + passes_count (>=3 accepted)
       const ratingByJoke: Record<string, number> = {};
+      const titleByJoke: Record<string, string> = {};
       for (const r of ratings) {
         const jid = Number((r as any).joke_id);
         const val = Number((r as any).rating);
         if (!Number.isFinite(jid) || !Number.isFinite(val)) continue;
         ratingByJoke[String(jid)] = Math.max(1, Math.min(5, val));
+        const title = String((r as any).joke_title ?? '').trim();
+        if (title) titleByJoke[String(jid)] = title;
       }
 
       const vals = batch.jokes.map(j => ratingByJoke[String(j.joke_id)] ?? 1);
@@ -864,6 +868,14 @@ function route(
       batch.rated_at = isoNow();
       batch.avg_score = Number(avg.toFixed(2));
       batch.passes_count = passes;
+      // Persist joke titles for accepted jokes (rating 5)
+      batch.jokes = batch.jokes.map(j => {
+        const rating = ratingByJoke[String(j.joke_id)] ?? 1;
+        if (rating === 5 && titleByJoke[String(j.joke_id)]) {
+          return { ...j, joke_title: titleByJoke[String(j.joke_id)] };
+        }
+        return j;
+      });
       persistDb(db);
 
       const publishedIds = batch.jokes.slice(0, passes).map(j => j.joke_id);

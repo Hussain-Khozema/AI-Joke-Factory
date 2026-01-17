@@ -66,4 +66,13 @@
   transform: rotateY(180deg);
 }
 
+/* Horizontal flip (top/bottom swap) */
+.flip-card-horizontal:hover .flip-card-inner {
+  transform: rotateX(180deg);
+}
+
+.flip-card-horizontal .flip-card-back {
+  transform: rotateX(180deg);
+}
+
 

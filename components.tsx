@@ -1,5 +1,5 @@
 import React from 'react';
-import { LogOut, User as UserIcon, X, Trophy, TrendingUp, Tag } from 'lucide-react';
+import { LogOut, User as UserIcon, X, Trophy, TrendingUp, Tag, Info } from 'lucide-react';
 import { useGame } from './context';
 import { Role } from './types';
 
@@ -149,9 +149,25 @@ export const PerformanceToggle: React.FC<{ label?: string }> = ({ label }) => {
 
   return (
     <div className="mb-6">
-      <div className="flex items-center gap-3 mb-3">
-        <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Market Position</h4>
-        <div className="h-px bg-gray-100 flex-1"></div>
+      <div className="mb-3">
+        <div className="flip-card flip-card-horizontal h-[28px]">
+          <div className="flip-card-inner">
+            <div className="flip-card-face flex items-center gap-3">
+              <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Market Position</h4>
+              <div className="h-px bg-gray-100 flex-1"></div>
+              <span className="text-gray-400">
+                <Info size={14} />
+              </span>
+            </div>
+            <div className="flip-card-face flip-card-back flex items-center text-[13px] font-semibold text-gray-600">
+              <span>
+                Market Position shown to customers:
+                <br />
+                Based on Sold/Accepted ratio and Profit.
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
       
       <div className="flex gap-1.5 w-full relative isolate">

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useGame } from '../context';
 import { Button, Card, RoleLayout } from '../components';
-import { ShoppingBag, RotateCcw, DollarSign } from 'lucide-react';
+import { ShoppingBag, RotateCcw, DollarSign, TrendingUp } from 'lucide-react';
 
 const performanceBadge = (raw: unknown): { label: string; className: string } | null => {
   const key = String(raw ?? '')
@@ -42,9 +42,12 @@ const Customer: React.FC = () => {
   
   if (!user) return null;
 
-  // API-driven market
-  const marketJokes = marketItems.map(item => ({
+  // API-driven market (old → new, top → bottom)
+  const marketJokes = [...marketItems]
+    .sort((a, b) => Number(a.joke_id) - Number(b.joke_id))
+    .map(item => ({
     id: String(item.joke_id),
+      title: String((item as any).joke_title ?? '').trim(),
     content: item.joke_text,
     teamName: item.team?.name ? String(item.team.name) : `Team ${String(item.team?.id ?? '')}`,
     teamPerfLabel: (item.team as any)?.performance_label ?? null,
@@ -52,18 +55,20 @@ const Customer: React.FC = () => {
     acceptedCount: Number((item.team as any)?.accepted_jokes ?? 0),
     batchId: String(item.joke_id), // placeholder to preserve UI (API does not include batch_id)
     isBoughtByMe: item.is_bought_by_me,
-  }));
+    }));
 
   const purchasedSet = new Set(user.purchasedJokes);
+  const marketPrice = Number.isFinite(config.marketPrice) && config.marketPrice > 0 ? config.marketPrice : 1;
+  const priceDisplay = `$${marketPrice.toFixed(2)}`;
 
   const handleBuy = (jokeId: string) => {
     // Purchase => fold (collapse) all expanded jokes immediately.
     setExpandedJokeIds({});
-    buyJoke(jokeId, 1);
+    buyJoke(jokeId, marketPrice);
   };
 
   const handleReturn = (jokeId: string) => {
-    returnJoke(jokeId, 1);
+    returnJoke(jokeId, marketPrice);
   };
 
   return (
@@ -123,71 +128,85 @@ const Customer: React.FC = () => {
                  const isLongJoke = joke.content.trim().length > 180;
                  const perf = joke.soldCount > 0 ? performanceBadge(joke.teamPerfLabel) : null;
                  const teamBadgeText = perf ? `${joke.teamName} – ${perf.label}` : joke.teamName;
-                 return (
-                   <Card key={joke.id} className="transition hover:shadow-md">
-                     <div className="flex justify-between items-start h-full">
-                       <div className="flex-1 pr-4 min-w-0">
-                         <div className="flex items-center space-x-2 mb-2">
-                           <span
-                             className={
-                               `inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-extrabold tracking-wide shadow-sm ` +
-                               (perf ? perf.className : 'bg-gray-100 text-gray-700 border border-gray-200')
-                             }
-                             title={String(joke.teamPerfLabel ?? '')}
-                           >
-                             {teamBadgeText}
-                           </span>
-                           <span className="text-xs text-gray-500 font-medium" title="Team's sold jokes / published jokes">
-                             {joke.soldCount} sold of {joke.acceptedCount} published
-                           </span>
-                         </div>
-                         <div className="pr-2">
-                           <p
-                             className={
-                               `text-lg text-gray-800 font-medium leading-relaxed whitespace-pre-wrap ` +
-                               (isExpanded ? '' : 'line-clamp-3')
-                             }
-                           >
-                             "{joke.content}"
-                           </p>
-                           {isLongJoke && (
-                             <button
-                               type="button"
-                               onClick={() =>
-                                 setExpandedJokeIds(prev => ({ ...prev, [joke.id]: !Boolean(prev[joke.id]) }))
-                               }
-                               className="mt-2 text-sm font-bold text-blue-600 underline hover:text-blue-700"
-                             >
-                               {isExpanded ? 'Read Less' : 'Read More'}
-                             </button>
-                           )}
-                         </div>
-                       </div>
-                       
-                       <div className="shrink-0 ml-4">
-                         {isOwned ? (
-                           <Button
-                             onClick={() => handleReturn(joke.id)}
-                             variant="secondary"
-                             className="flex items-center space-x-2 text-red-600 border border-gray-200"
-                           >
-                             <RotateCcw size={16} />
-                             <span>Return ($1)</span>
-                           </Button>
-                         ) : (
-                           <Button
-                             onClick={() => handleBuy(joke.id)}
-                             disabled={user.wallet <= 0 || !config.isActive}
-                             className="flex items-center space-x-2 w-32 justify-center"
-                           >
-                             <ShoppingBag size={16} />
-                             <span>Buy ($1)</span>
-                           </Button>
-                         )}
-                       </div>
-                     </div>
-                   </Card>
-                 );
+                return (
+                  <Card key={joke.id} className="rounded-xl border border-slate-200 hover:shadow-md transition-shadow">
+                    <div className="-m-4 flex flex-col h-full">
+                      <div className="px-5 py-4 flex flex-col gap-3 flex-grow">
+                        <div className="relative pr-36">
+                          <div className="flex items-center gap-3">
+                            <span
+                              className={
+                                `inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-extrabold tracking-wide ` +
+                                (perf ? perf.className : 'bg-gray-100 text-gray-700 border border-gray-200')
+                              }
+                              title={String(joke.teamPerfLabel ?? '')}
+                            >
+                              {teamBadgeText}
+                            </span>
+                            <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500" title="Team sold / published">
+                              <TrendingUp size={12} className="text-slate-400" />
+                              {joke.soldCount} sold / {joke.acceptedCount} published
+                            </span>
+                          </div>
+                          <div className="absolute right-0 top-0 flex items-center gap-2">
+                            {isOwned && (
+                              <span className="inline-flex items-center gap-1 text-xs font-semibold text-slate-400">
+                                <RotateCcw size={12} />
+                                Owned
+                              </span>
+                            )}
+                            {isOwned ? (
+                              <Button
+                                onClick={() => handleReturn(joke.id)}
+                                variant="secondary"
+                                className="h-10 w-32 text-sm flex items-center justify-center space-x-1.5 text-blue-600 border border-blue-200 bg-white hover:bg-blue-50"
+                              >
+                                <RotateCcw size={16} />
+                                <span>Return {priceDisplay}</span>
+                              </Button>
+                            ) : (
+                              <Button
+                                onClick={() => handleBuy(joke.id)}
+                                disabled={user.wallet <= 0 || !config.isActive}
+                                className="h-11 w-36 text-base flex items-center justify-center space-x-2 bg-blue-600 hover:bg-blue-700"
+                              >
+                                <ShoppingBag size={16} />
+                                <span>Buy {priceDisplay}</span>
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="text-[17px] font-extrabold text-blue-900 tracking-tight">
+                            {joke.title || 'Untitled Joke'}
+                          </div>
+                          <div
+                            className={
+                              `mt-2 border-l-2 border-blue-200 pl-3 text-base text-slate-700 italic leading-relaxed whitespace-pre-wrap ` +
+                              (isExpanded ? '' : 'line-clamp-3')
+                            }
+                          >
+                            "{joke.content}"
+                          </div>
+                          {isLongJoke && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedJokeIds(prev => ({ ...prev, [joke.id]: !Boolean(prev[joke.id]) }))
+                              }
+                              className="mt-2 text-sm font-bold text-blue-600 underline hover:text-blue-700"
+                            >
+                              {isExpanded ? 'Read Less' : 'Read More'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Footer removed: keep card clean under content */}
+                    </div>
+                  </Card>
+                );
                })
              )}
            </div>

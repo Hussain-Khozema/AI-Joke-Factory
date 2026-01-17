@@ -186,6 +186,7 @@ function normalizeInstructorStats(raw: any): ApiInstructorStatsResponse {
     points: Number(item.points ?? item.Points ?? 0),
     total_sales: Number(item.total_sales ?? item.TotalSales ?? 0),
     unsold_jokes: Number(item.unsold_jokes ?? item.UnsoldJokes ?? item.unsoldJokes ?? 0),
+    unaccepted_jokes: Number(item.unaccepted_jokes ?? item.UnacceptedJokes ?? item.unacceptedJokes ?? 0),
     batches_rated: Number(item.batches_rated ?? item.BatchesRated ?? 0),
     profit: Number(item.profit ?? item.Profit ?? 0),
     total_jokes: Number(item.total_jokes ?? item.TotalJokes ?? 0),
@@ -202,6 +203,9 @@ function normalizeInstructorStats(raw: any): ApiInstructorStatsResponse {
     : Array.isArray(data.sales_over_time ?? data.SalesOverTime)
       ? (data.sales_over_time ?? data.SalesOverTime)
       : [];
+  const unrated_jokes_over_time = Array.isArray(data.unrated_jokes_over_time ?? data.UnratedJokesOverTime)
+    ? (data.unrated_jokes_over_time ?? data.UnratedJokesOverTime)
+    : [];
   const batch_quality_by_size = Array.isArray(data.batch_quality_by_size ?? data.BatchQualityBySize)
     ? (data.batch_quality_by_size ?? data.BatchQualityBySize)
     : Array.isArray(data.batch_size_quality ?? data.BatchSizeQuality)
@@ -242,6 +246,20 @@ function normalizeInstructorStats(raw: any): ApiInstructorStatsResponse {
       TotalSales: 'total_sales',
       cumulative_points: 'total_sales', // backend uses cumulative_points for sales series
       CumulativePoints: 'total_sales',
+      timestamp: 'timestamp',
+      Timestamp: 'timestamp',
+    }),
+    unrated_jokes_over_time: mapKeys(unrated_jokes_over_time, {
+      team_event_index: 'team_event_index',
+      TeamEventIndex: 'team_event_index',
+      event_index: 'team_event_index',
+      EventIndex: 'team_event_index',
+      team_id: 'team_id',
+      TeamId: 'team_id',
+      team_name: 'team_name',
+      TeamName: 'team_name',
+      queue_count: 'queue_count',
+      QueueCount: 'queue_count',
       timestamp: 'timestamp',
       Timestamp: 'timestamp',
     }),
@@ -341,6 +359,7 @@ interface GameContextType {
     ratings: { [jokeId: string]: number },
     tags: { [jokeId: string]: string[] },
     feedback: string,
+    jokeTitles: { [jokeId: string]: string },
   ) => Promise<void>;
   
   sales: Record<string, number>; // jokeId -> count of purchases
@@ -1638,6 +1657,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     ratings: { [jokeId: string]: number },
     tags: { [jokeId: string]: string[] },
     feedback: string,
+    jokeTitles: { [jokeId: string]: string },
   ) => {
     if (!roundId) return;
     const bid = Number(batchId) as BatchId;
@@ -1649,6 +1669,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
       joke_id: Number(jid) as JokeId,
       rating,
       tag: '',
+      joke_title: rating === 5 ? (jokeTitles[String(jid)] ?? '').trim() : undefined,
     }));
 
     try {

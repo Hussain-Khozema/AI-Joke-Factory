@@ -4,7 +4,7 @@ import { Button, Card, RoleLayout, Modal } from '../components';
 import { Play, RefreshCw, Settings, Clock, StopCircle, GripVertical, Users, CheckCircle, Maximize2, X, Trash2 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  LineChart, Line, Legend
+  LineChart, Line, Legend, ScatterChart, Scatter, LabelList
 } from 'recharts';
 import { Role } from '../types';
 
@@ -16,7 +16,7 @@ const PALETTE = [
 ];
 
 const INSTRUCTOR_HIDDEN_CHARTS_SESSION_KEY = 'joke_factory_instructor_hidden_charts_v1';
-const CHART_KEYS = ['sales', 'sequence_quality'] as const;
+const CHART_KEYS = ['sales', 'sequence_quality', 'unrated_jokes'] as const;
 type ChartKey = typeof CHART_KEYS[number];
 
 const Instructor: React.FC = () => {
@@ -44,12 +44,21 @@ const Instructor: React.FC = () => {
   const [expandedChart, setExpandedChart] = useState<string | null>(null);
   const [salesTab, setSalesTab] = useState<'R1' | 'R2' | 'BOTH'>('R2');
   const [sequenceTab, setSequenceTab] = useState<'R1' | 'R2' | 'BOTH'>('R2');
+  const [unratedTab, setUnratedTab] = useState<'R1' | 'R2' | 'BOTH'>('R2');
   const [salesTeamFilter, setSalesTeamFilter] = useState<string>('ALL');
   const [sequenceTeamFilter, setSequenceTeamFilter] = useState<string>('ALL');
+  const [unratedTeamFilter, setUnratedTeamFilter] = useState<string>('ALL');
   const [hoveredSalesSeriesKey, setHoveredSalesSeriesKey] = useState<string | null>(null);
   const [hoveredSequenceSeriesKey, setHoveredSequenceSeriesKey] = useState<string | null>(null);
+  const [hoveredUnratedSeriesKey, setHoveredUnratedSeriesKey] = useState<string | null>(null);
   const [leaderboardRoundTab, setLeaderboardRoundTab] = useState<1 | 2>((config.round === 2 ? 2 : 1) as 1 | 2);
   const leaderboardRoundTouchedRef = useRef(false);
+  const [scatterXMetric, setScatterXMetric] = useState<string>('total_sales');
+  const [scatterYMode, setScatterYMode] = useState<'metric' | 'ratio'>('metric');
+  const [scatterYMetric, setScatterYMetric] = useState<string>('profit');
+  const [scatterNumerator, setScatterNumerator] = useState<string>('profit');
+  const [scatterDenominator, setScatterDenominator] = useState<string>('total_jokes');
+  const [scatterRoundMode, setScatterRoundMode] = useState<'R1' | 'R2' | 'BOTH'>('R2');
 
   // Session-only chart visibility (defaults back on new browser session)
   const [hiddenCharts, setHiddenCharts] = useState<ChartKey[]>([]);
@@ -172,6 +181,7 @@ const Instructor: React.FC = () => {
     const r = (config.round === 2 ? 2 : 1) as 1 | 2;
     setSalesTab(prev => (prev === 'BOTH' ? prev : (r === 1 ? 'R1' : 'R2')));
     setSequenceTab(prev => (prev === 'BOTH' ? prev : (r === 1 ? 'R1' : 'R2')));
+    setUnratedTab(prev => (prev === 'BOTH' ? prev : (r === 1 ? 'R1' : 'R2')));
     if (!leaderboardRoundTouchedRef.current) setLeaderboardRoundTab(r);
   }, [config.round]);
 
@@ -189,24 +199,204 @@ const Instructor: React.FC = () => {
   const statsR2 = instructorStatsRound2 ?? null;
   const leaderboardStatsSelected = (leaderboardRoundTab === 1 ? statsR1 : statsR2) ?? instructorStats ?? null;
 
-  const leaderboardBase = useMemo(() => {
-    return (leaderboardStatsSelected?.leaderboard || []).map(row => {
-    const teamId = Number(row.team.id);
-    const teamName = teamNames[String(teamId)] || row.team.name;
-    return {
-      team_id: teamId,
-      team_name: teamName,
-      rated_batches: Number(row.batches_rated ?? 0),
-      accepted_jokes: Number(row.accepted_jokes ?? 0),
-      unaccepted_jokes: Number((row as any).unaccepted_jokes ?? 0),
-      unsold_jokes: Number((row as any).unsold_jokes ?? 0),
+  const mapLeaderboard = (rows: any[]) => {
+    return (rows || []).map(row => {
+      const teamId = Number(row.team.id);
+      const teamName = teamNames[String(teamId)] || row.team.name;
+      return {
+        team_id: teamId,
+        team_name: teamName,
+        rated_batches: Number(row.batches_rated ?? 0),
+        accepted_jokes: Number(row.accepted_jokes ?? 0),
+        unaccepted_jokes: Number(row.unaccepted_jokes ?? 0),
+        unsold_jokes: Number(row.unsold_jokes ?? 0),
         total_jokes: Number(row.total_jokes ?? 0),
-      avg_score_overall: Number(row.avg_score_overall ?? 0),
-      total_sales: Number(row.total_sales ?? 0),
-      profit: Number((row as any).profit ?? 0),
-    };
-  });
+        avg_score_overall: Number(row.avg_score_overall ?? 0),
+        total_sales: Number(row.total_sales ?? 0),
+        profit: Number(row.profit ?? 0),
+      };
+    });
+  };
+
+  const leaderboardBase = useMemo(() => {
+    return mapLeaderboard(leaderboardStatsSelected?.leaderboard || []);
   }, [leaderboardStatsSelected?.leaderboard, teamNames]);
+
+  const leaderboardBaseR1 = useMemo(() => {
+    return mapLeaderboard(statsR1?.leaderboard || []);
+  }, [statsR1?.leaderboard, teamNames]);
+
+  const leaderboardBaseR2 = useMemo(() => {
+    return mapLeaderboard(statsR2?.leaderboard || []);
+  }, [statsR2?.leaderboard, teamNames]);
+
+  // Metrics that must be displayed as integers (joke counts, batches, sales)
+  const integerMetricKeys = new Set([
+    'total_sales',
+    'accepted_jokes',
+    'unaccepted_jokes',
+    'unsold_jokes',
+    'total_jokes',
+    'rated_batches',
+  ]);
+
+  const scatterBaseMetrics = [
+    { key: 'total_sales', label: 'Total Sales' },
+    { key: 'accepted_jokes', label: 'Accepted Jokes' },
+    { key: 'unaccepted_jokes', label: 'Wasted Jokes' },
+    { key: 'unsold_jokes', label: 'Unsold Jokes' },
+    { key: 'total_jokes', label: 'Total Jokes' },
+    { key: 'rated_batches', label: 'Rated Batches' },
+    { key: 'avg_score_overall', label: 'Avg Score' },
+    { key: 'profit', label: 'Profit' },
+  ];
+  const scatterRatioMetrics = [
+    { key: 'ratio:waste_rate', label: 'Waste Rate (Wasted / Total)' },
+    { key: 'ratio:accept_rate', label: 'Accept Rate (Accepted / Total)' },
+    { key: 'ratio:marketing_efficiency', label: 'Mkt Efficiency (Sales / Accepted)' },
+    { key: 'ratio:marketing_inefficiency', label: 'Mkt Inefficiency (Unsold / Accepted)' },
+  ];
+  const scatterMetrics = [...scatterBaseMetrics, ...scatterRatioMetrics];
+
+  const metricLabel = (key: string) =>
+    scatterMetrics.find(m => m.key === key)?.label ?? key;
+
+  const metricValue = (row: any, key: string) => {
+    if (key.startsWith('ratio:')) {
+      const pick = (k: string) => {
+        const v = Number(row?.[k] ?? 0);
+        return Number.isFinite(v) ? v : 0;
+      };
+      switch (key) {
+        case 'ratio:waste_rate': {
+          const den = pick('total_jokes');
+          return den === 0 ? 0 : pick('unaccepted_jokes') / den;
+        }
+        case 'ratio:accept_rate': {
+          const den = pick('total_jokes');
+          return den === 0 ? 0 : pick('accepted_jokes') / den;
+        }
+        case 'ratio:marketing_efficiency': {
+          const den = pick('accepted_jokes');
+          return den === 0 ? 0 : pick('total_sales') / den;
+        }
+        case 'ratio:marketing_inefficiency': {
+          const den = pick('accepted_jokes');
+          return den === 0 ? 0 : pick('unsold_jokes') / den;
+        }
+        default:
+          return 0;
+      }
+    }
+    const val = Number(row?.[key] ?? 0);
+    return Number.isFinite(val) ? val : 0;
+  };
+
+  const isRatioMetricSelected = scatterYMetric.startsWith('ratio:');
+  const isRatioYAxis = scatterYMode === 'ratio' || isRatioMetricSelected;
+  const yAxisLabel =
+    scatterYMode === 'ratio'
+      ? `${metricLabel(scatterNumerator)} / ${metricLabel(scatterDenominator)}`
+      : metricLabel(scatterYMetric);
+
+  const scatterData = useMemo(() => {
+    const buildPoints = (rows: any[], roundLabel: 'R1' | 'R2') =>
+      rows.map(row => {
+        const xVal = metricValue(row, scatterXMetric);
+        const yVal =
+          scatterYMode === 'ratio'
+            ? (() => {
+                const num = metricValue(row, scatterNumerator);
+                const den = metricValue(row, scatterDenominator);
+                return den === 0 ? 0 : num / den;
+              })()
+            : metricValue(row, scatterYMetric);
+        return {
+          team_name: row.team_name,
+          round: roundLabel,
+          x: xVal,
+          y: yVal,
+          xLabel: metricLabel(scatterXMetric),
+          yLabel: yAxisLabel,
+          xRaw: xVal,
+          yRaw: yVal,
+        };
+      });
+
+    if (scatterRoundMode === 'R1') return buildPoints(leaderboardBaseR1, 'R1');
+    if (scatterRoundMode === 'R2') return buildPoints(leaderboardBaseR2, 'R2');
+    return [
+      ...buildPoints(leaderboardBaseR1, 'R1'),
+      ...buildPoints(leaderboardBaseR2, 'R2'),
+    ];
+  }, [
+    leaderboardBaseR1,
+    leaderboardBaseR2,
+    scatterXMetric,
+    scatterYMode,
+    scatterYMetric,
+    scatterNumerator,
+    scatterDenominator,
+    scatterRoundMode,
+  ]);
+
+  // Utility to format scatter value: integer if it's an integer-type metric, else 2 decimals
+  const formatScatterValue = (val: number, isInteger: boolean) =>
+    isInteger ? Math.round(val).toString() : Number(val).toFixed(2);
+
+  // Determine if the Y metric should display as integer
+  const isYMetricInteger = scatterYMode === 'metric' && integerMetricKeys.has(scatterYMetric);
+  const isXMetricInteger = integerMetricKeys.has(scatterXMetric);
+
+  // Round-based colors: R1 = slate, R2 = blue
+  const SCATTER_R1_COLOR = '#64748b'; // slate-500
+  const SCATTER_R2_COLOR = '#2563eb'; // blue-600
+
+  // Custom scatter dot renderer with round-based coloring (only when BOTH rounds selected)
+  const renderScatterDot = (props: any) => {
+    const { cx, cy, payload } = props;
+    if (cx == null || cy == null || !payload) return null;
+    const isR1 = payload.round === 'R1';
+    // Only differentiate colors when BOTH rounds are selected; otherwise always blue
+    const color = scatterRoundMode === 'BOTH' && isR1 ? SCATTER_R1_COLOR : SCATTER_R2_COLOR;
+    // When both rounds shown, R1 points are faded
+    const opacity = scatterRoundMode === 'BOTH' && isR1 ? 0.35 : 1;
+    return (
+      <circle
+        cx={cx}
+        cy={cy}
+        r={6}
+        fill={color}
+        fillOpacity={opacity}
+        stroke={color}
+        strokeOpacity={opacity}
+        strokeWidth={1}
+      />
+    );
+  };
+
+  const renderScatterLabel = (props: any) => {
+    const { x, y, payload, viewBox } = props;
+    if (x == null || y == null || !payload) return null;
+    const valueText = formatScatterValue(payload.yRaw, isYMetricInteger);
+    const roundSuffix = scatterRoundMode === 'BOTH' ? ` • ${payload.round}` : '';
+    const vbY = viewBox?.y ?? 0;
+    const vbH = viewBox?.height ?? 0;
+    const maxY = vbY + vbH;
+    const offset = 16;
+    let labelY = y - offset;
+    if (labelY < vbY + 10) labelY = y + offset;
+    if (labelY > maxY - 6) labelY = y - offset;
+    // Only differentiate colors when BOTH rounds selected; otherwise always blue
+    const isR1 = payload.round === 'R1';
+    const labelColor = scatterRoundMode === 'BOTH' && isR1 ? SCATTER_R1_COLOR : SCATTER_R2_COLOR;
+    const labelOpacity = scatterRoundMode === 'BOTH' && isR1 ? 0.5 : 1;
+    return (
+      <text x={x} y={labelY} textAnchor="middle" dominantBaseline="central" fontSize={10} fill={labelColor} fillOpacity={labelOpacity}>
+        {payload.team_name}{roundSuffix}: {valueText}
+      </text>
+    );
+  };
 
   const avgQualityByTeamId = useMemo(() => {
     const out: Record<string, number> = {};
@@ -383,6 +573,11 @@ const Instructor: React.FC = () => {
     if (!visibleTeamIds.includes(String(sequenceTeamFilter))) return visibleTeamIds;
     return [String(sequenceTeamFilter)];
   }, [sequenceTeamFilter, visibleTeamIds]);
+  const unratedTeamIds = useMemo(() => {
+    if (unratedTeamFilter === 'ALL') return visibleTeamIds;
+    if (!visibleTeamIds.includes(String(unratedTeamFilter))) return visibleTeamIds;
+    return [String(unratedTeamFilter)];
+  }, [unratedTeamFilter, visibleTeamIds]);
 
   useEffect(() => {
     if (salesTeamFilter !== 'ALL' && !visibleTeamIds.includes(String(salesTeamFilter))) setSalesTeamFilter('ALL');
@@ -390,6 +585,9 @@ const Instructor: React.FC = () => {
   useEffect(() => {
     if (sequenceTeamFilter !== 'ALL' && !visibleTeamIds.includes(String(sequenceTeamFilter))) setSequenceTeamFilter('ALL');
   }, [sequenceTeamFilter, visibleTeamIds]);
+  useEffect(() => {
+    if (unratedTeamFilter !== 'ALL' && !visibleTeamIds.includes(String(unratedTeamFilter))) setUnratedTeamFilter('ALL');
+  }, [unratedTeamFilter, visibleTeamIds]);
 
   const buildDenseSalesSeries = (
     events: any[],
@@ -402,6 +600,35 @@ const Instructor: React.FC = () => {
       if (!Number.isFinite(idx)) continue;
       if (!byEvent[idx]) byEvent[idx] = {};
       byEvent[idx][`${keyPrefix}${String(ev.team_id)}`] = Number((ev as any).total_sales ?? 0);
+    }
+    const eventIndices = Object.keys(byEvent).map(n => Number(n)).filter(n => Number.isFinite(n)).sort((a, b) => a - b);
+    const last: Record<string, number> = {};
+    teamIds.forEach(tid => { last[`${keyPrefix}${tid}`] = 0; });
+    const rows: any[] = [];
+    const base: any = { index: 0 };
+    teamIds.forEach(tid => { base[`${keyPrefix}${tid}`] = 0; });
+    rows.push(base);
+    for (const idx of eventIndices) {
+      const updates = byEvent[idx] || {};
+      for (const k of Object.keys(updates)) last[k] = updates[k];
+      const row: any = { index: idx };
+      teamIds.forEach(tid => { row[`${keyPrefix}${tid}`] = last[`${keyPrefix}${tid}`] ?? 0; });
+      rows.push(row);
+    }
+    return rows;
+  };
+
+  const buildDenseUnratedSeries = (
+    events: any[],
+    teamIds: string[],
+    keyPrefix: string,
+  ): any[] => {
+    const byEvent: Record<number, Record<string, number>> = {};
+    for (const ev of events) {
+      const idx = Number((ev as any).team_event_index ?? (ev as any).event_index);
+      if (!Number.isFinite(idx)) continue;
+      if (!byEvent[idx]) byEvent[idx] = {};
+      byEvent[idx][`${keyPrefix}${String(ev.team_id)}`] = Number((ev as any).queue_count ?? 0);
     }
     const eventIndices = Object.keys(byEvent).map(n => Number(n)).filter(n => Number.isFinite(n)).sort((a, b) => a - b);
     const last: Record<string, number> = {};
@@ -443,6 +670,26 @@ const Instructor: React.FC = () => {
     if (salesTab === 'R1') return buildDenseSalesSeries(eventsR1, ids, '');
     if (salesTab === 'R2') return buildDenseSalesSeries(eventsR2, ids, '');
     return buildDenseSalesSeries(fallbackEvents, ids, '');
+  })();
+
+  const unratedJokesOverTimeData = (() => {
+    const eventsR1 = statsR1?.unrated_jokes_over_time ?? [];
+    const eventsR2 = statsR2?.unrated_jokes_over_time ?? [];
+    const fallbackEvents =
+      (instructorStats?.unrated_jokes_over_time && instructorStats.unrated_jokes_over_time.length > 0)
+        ? instructorStats.unrated_jokes_over_time
+        : [];
+    const ids = unratedTeamIds;
+    const r1Events = eventsR1.length === 0 && config.round === 1 ? fallbackEvents : eventsR1;
+    const r2Events = eventsR2.length === 0 && config.round === 2 ? fallbackEvents : eventsR2;
+    if (unratedTab === 'BOTH') {
+      const s1 = buildDenseUnratedSeries(r1Events, ids, 'r1-');
+      const s2 = buildDenseUnratedSeries(r2Events, ids, 'r2-');
+      return mergeByIndex(s1, s2);
+    }
+    if (unratedTab === 'R1') return buildDenseUnratedSeries(r1Events, ids, '');
+    if (unratedTab === 'R2') return buildDenseUnratedSeries(r2Events, ids, '');
+    return buildDenseUnratedSeries(fallbackEvents, ids, '');
   })();
 
   const buildDenseSequenceSeries = (points: any[], teamIds: string[], keyPrefix: string): any[] => {
@@ -1372,6 +1619,316 @@ const Instructor: React.FC = () => {
                </ResponsiveContainer>
             );
         }
+        case 'unrated_jokes': {
+            const isExpanded = isExpandedView;
+            const teamIds = unratedTeamIds;
+            const eventsR1 = statsR1?.unrated_jokes_over_time ?? [];
+            const eventsR2 = statsR2?.unrated_jokes_over_time ?? [];
+            const fallbackEvents = (instructorStats?.unrated_jokes_over_time ?? []);
+            const teamsWithUnratedR1 = new Set<string>(eventsR1.map((e: any) => String(e.team_id)));
+            const teamsWithUnratedR2 = new Set<string>(eventsR2.map((e: any) => String(e.team_id)));
+            // If per-round cache is empty, allow current-round fallback data to show up.
+            if (teamsWithUnratedR1.size === 0 && config.round === 1 && fallbackEvents.length > 0) {
+              fallbackEvents.forEach((e: any) => teamsWithUnratedR1.add(String(e.team_id)));
+            }
+            if (teamsWithUnratedR2.size === 0 && config.round === 2 && fallbackEvents.length > 0) {
+              fallbackEvents.forEach((e: any) => teamsWithUnratedR2.add(String(e.team_id)));
+            }
+
+            const seriesDisplayName = (rawKey: string) => {
+              const isR1 = rawKey.startsWith('r1-');
+              const isR2 = rawKey.startsWith('r2-');
+              const teamId = isR1 || isR2 ? rawKey.slice(3) : rawKey;
+              const baseRaw = String(teamNames[teamId] ?? `Team ${teamId}`);
+              const base = baseRaw.length > 18 ? `${baseRaw.slice(0, 16)}…` : baseRaw;
+              if (!isExpanded) return base;
+              if (unratedTab === 'BOTH') return base;
+              return base;
+            };
+            const colorForTeamId = (tid: string) => {
+              const idx = visibleTeamIds.indexOf(String(tid));
+              return PALETTE[(idx >= 0 ? idx : 0) % PALETTE.length];
+            };
+            const labelSeriesKeys = (() => {
+              if (!isExpanded) return [] as string[];
+              if (unratedTab !== 'BOTH') return teamIds.map(tid => String(tid));
+              return teamIds.length > 8
+                ? teamIds.map(tid => `r2-${tid}`)
+                : teamIds.flatMap(tid => [`r1-${tid}`, `r2-${tid}`]);
+            })();
+
+            const lastIndexBySeriesKey: Record<string, number> = {};
+            if (isExpanded) {
+              for (const k of labelSeriesKeys) {
+                for (let i = unratedJokesOverTimeData.length - 1; i >= 0; i--) {
+                  const row: any = (unratedJokesOverTimeData as any[])[i];
+                  const yv = Number(row?.[k]);
+                  if (Number.isFinite(yv)) {
+                    lastIndexBySeriesKey[k] = i;
+                    break;
+                  }
+                }
+              }
+            }
+            const labelYOffsetBySeriesKey: Record<string, number> = {};
+            if (isExpanded) {
+              const groups = new Map<string, string[]>();
+              for (const k of labelSeriesKeys) {
+                const idx = lastIndexBySeriesKey[k];
+                if (idx == null) continue;
+                const row: any = (unratedJokesOverTimeData as any[])[idx];
+                const yv = Number(row?.[k]);
+                if (!Number.isFinite(yv)) continue;
+                const gk = String(Math.round(yv * 100) / 100);
+                const arr = groups.get(gk) ?? [];
+                arr.push(k);
+                groups.set(gk, arr);
+              }
+              for (const arr of groups.values()) {
+                if (arr.length <= 1) continue;
+                const reachIndex = (seriesKey: string) => {
+                  const lastIdx = lastIndexBySeriesKey[seriesKey];
+                  if (lastIdx == null) return Number.POSITIVE_INFINITY;
+                  const lastRow: any = (unratedJokesOverTimeData as any[])[lastIdx];
+                  const finalY = Number(lastRow?.[seriesKey]);
+                  if (!Number.isFinite(finalY)) return Number.POSITIVE_INFINITY;
+                  for (let i = 0; i <= lastIdx; i++) {
+                    const row: any = (unratedJokesOverTimeData as any[])[i];
+                    const yv = Number(row?.[seriesKey]);
+                    if (Number.isFinite(yv) && yv === finalY) return i;
+                  }
+                  return lastIdx;
+                };
+                arr.sort((a, b) => {
+                  const ra = reachIndex(a);
+                  const rb = reachIndex(b);
+                  if (ra !== rb) return ra - rb;
+                  return a.localeCompare(b);
+                });
+                const step = 14;
+                const mid = (arr.length - 1) / 2;
+                arr.forEach((k, i) => {
+                  labelYOffsetBySeriesKey[k] = (i - mid) * step;
+                });
+              }
+            }
+            const makeEndLabel = (seriesKey: string, labelText: string, color: string) => (p: any) => {
+              if (!isExpanded) return null;
+              if (p?.index !== lastIndexBySeriesKey[seriesKey]) return null;
+              const x = Number(p?.x);
+              const y = Number(p?.y);
+              if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+              const isR1 = seriesKey.startsWith('r1-');
+              const labelOpacity = unratedTab === 'BOTH' && isR1 ? 0.45 : 1;
+              const dyOffset = labelYOffsetBySeriesKey[seriesKey] ?? 0;
+              return (
+                <text
+                  x={x - 6}
+                  y={y + dyOffset}
+                  dy={4}
+                  textAnchor="end"
+                  fontSize={12}
+                  fontWeight={800}
+                  fill="#111827"
+                  opacity={labelOpacity}
+                  paintOrder="stroke"
+                  stroke="#ffffff"
+                  strokeWidth={5}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  pointerEvents="none"
+                >
+                  <tspan fill={color}>● </tspan>
+                  <tspan fill="#111827">{labelText}</tspan>
+                </text>
+              );
+            };
+            const shouldShowEndLabel = (seriesKey: string) => labelSeriesKeys.includes(seriesKey);
+            const computeSeriesPriority = (seriesKey: string) => {
+              let lastIdx = -1;
+              let finalY = -Infinity;
+              for (let i = unratedJokesOverTimeData.length - 1; i >= 0; i--) {
+                const row: any = (unratedJokesOverTimeData as any[])[i];
+                const yv = Number(row?.[seriesKey]);
+                if (Number.isFinite(yv)) {
+                  finalY = yv;
+                  lastIdx = i;
+                  break;
+                }
+              }
+              let reachIdx = lastIdx;
+              if (Number.isFinite(finalY) && lastIdx >= 0) {
+                for (let i = 0; i <= lastIdx; i++) {
+                  const row: any = (unratedJokesOverTimeData as any[])[i];
+                  const yv = Number(row?.[seriesKey]);
+                  if (Number.isFinite(yv) && yv === finalY) {
+                    reachIdx = i;
+                    break;
+                  }
+                }
+              }
+              return { finalY, reachIdx };
+            };
+            const sortSeriesKeysForRender = (keys: string[]) => {
+              const enriched = keys.map(k => ({ k, ...computeSeriesPriority(k) }));
+              enriched.sort((a, b) => {
+                if (a.finalY !== b.finalY) return a.finalY - b.finalY;
+                if (a.reachIdx !== b.reachIdx) return b.reachIdx - a.reachIdx;
+                return a.k.localeCompare(b.k);
+              });
+              return enriched.map(x => x.k);
+            };
+
+            return (
+               <ResponsiveContainer width="100%" height="100%">
+                 <LineChart data={unratedJokesOverTimeData} margin={{ top: 12, bottom: 20, left: 48, right: isExpanded ? 24 : 16 }}>
+                   <CartesianGrid strokeDasharray="3 3" />
+                   <XAxis dataKey="index" label={{ value: 'Batch Sequence', position: 'insideBottom', offset: -10 }} />
+                   <YAxis
+                     width={44}
+                     allowDecimals={false}
+                     domain={[
+                       0,
+                       (dataMax: number) => {
+                         const m = Number.isFinite(dataMax) ? dataMax : 0;
+                         return Math.max(1, Math.ceil(m * 1.1));
+                       },
+                     ]}
+                     padding={{ top: 10, bottom: 4 }}
+                     label={{ value: 'Unrated Jokes', angle: -90, position: 'insideLeft', style: { textAnchor: 'middle' }, dx: -10, dy: 20 }}
+                   />
+                   <Tooltip
+                     shared={false}
+                     content={(props: any) => {
+                       const active = Boolean(props?.active);
+                       const payload = Array.isArray(props?.payload) ? props.payload : [];
+                       if (!active || payload.length === 0) return null;
+                       const hoveredKey = hoveredUnratedSeriesKey;
+                       const p =
+                         (hoveredKey
+                           ? payload.find((it: any) => String(it?.dataKey ?? '') === hoveredKey)
+                           : undefined) ??
+                         payload[0] ??
+                         {};
+                       const rawKey = String(p.dataKey ?? '');
+                       const isR1 = rawKey.startsWith('r1-');
+                       const isR2 = rawKey.startsWith('r2-');
+                       const teamId = isR1 || isR2 ? rawKey.slice(3) : rawKey;
+                       const roundLabel = isR1 ? 'Round 1' : isR2 ? 'Round 2' : '';
+                       const teamName = String(teamNames[teamId] ?? `Team ${teamId}`);
+                       const queueCount = Number(p.value ?? 0);
+                       const label = Number(props?.label);
+                       return (
+                         <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-lg">
+                           <div className="text-xs font-bold text-gray-500">Batch {Number.isFinite(label) ? label : ''}</div>
+                           <div className="text-sm font-bold text-gray-900">{teamName}</div>
+                           {roundLabel && <div className="text-xs font-bold text-gray-500">{roundLabel}</div>}
+                           <div className="mt-1 text-sm text-gray-700">
+                             <div className="flex justify-between gap-4">
+                               <span className="font-medium">Unrated</span>
+                               <span className="font-mono font-bold text-indigo-700">{Number.isFinite(queueCount) ? queueCount : 0}</span>
+                             </div>
+                           </div>
+                         </div>
+                       );
+                     }}
+                   />
+                   {unratedTab === 'BOTH' ? (
+                     <>
+                       {sortSeriesKeysForRender(
+                         visibleTeamIds.filter(tid => teamsWithUnratedR1.has(String(tid))).map(tid => `r1-${tid}`)
+                       ).map((seriesKey) => {
+                         const teamId = seriesKey.slice(3);
+                         const color = colorForTeamId(teamId);
+                         return (
+                         <Line
+                           key={seriesKey}
+                           type="monotone"
+                           dataKey={seriesKey}
+                           name={`${teamNames[teamId] || `Team ${teamId}`} (R1)`}
+                           stroke={color}
+                           strokeWidth={2}
+                           strokeOpacity={0.25}
+                           strokeDasharray="6 4"
+                           dot={false}
+                           isAnimationActive={!isExpanded}
+                           activeDot={hoveredUnratedSeriesKey === seriesKey ? { r: 4 } : false}
+                           label={
+                             isExpanded && shouldShowEndLabel(seriesKey)
+                               ? makeEndLabel(seriesKey, seriesDisplayName(seriesKey), color)
+                               : false
+                           }
+                           onMouseEnter={() => setHoveredUnratedSeriesKey(seriesKey)}
+                           onMouseLeave={() => setHoveredUnratedSeriesKey(null)}
+                         />
+                         );
+                       })}
+                       {sortSeriesKeysForRender(
+                         visibleTeamIds.filter(tid => teamsWithUnratedR2.has(String(tid))).map(tid => `r2-${tid}`)
+                       ).map((seriesKey) => {
+                         const teamId = seriesKey.slice(3);
+                         const color = colorForTeamId(teamId);
+                         return (
+                         <Line
+                           key={seriesKey}
+                           type="monotone"
+                           dataKey={seriesKey}
+                           name={`${teamNames[teamId] || `Team ${teamId}`} (R2)`}
+                           stroke={color}
+                           strokeWidth={3}
+                           strokeOpacity={1}
+                           dot={false}
+                           isAnimationActive={!isExpanded}
+                           activeDot={hoveredUnratedSeriesKey === seriesKey ? { r: 4 } : false}
+                           label={
+                             isExpanded && shouldShowEndLabel(seriesKey)
+                               ? makeEndLabel(seriesKey, seriesDisplayName(seriesKey), color)
+                               : false
+                           }
+                           onMouseEnter={() => setHoveredUnratedSeriesKey(seriesKey)}
+                           onMouseLeave={() => setHoveredUnratedSeriesKey(null)}
+                         />
+                         );
+                       })}
+                     </>
+                   ) : (
+                     <>
+                   {sortSeriesKeysForRender(
+                      (unratedTab === 'R1'
+                        ? teamIds.filter(tid => teamsWithUnratedR1.has(String(tid)))
+                        : unratedTab === 'R2'
+                          ? teamIds.filter(tid => teamsWithUnratedR2.has(String(tid)))
+                          : teamIds
+                      ).map(tid => String(tid))
+                    ).map((teamId) => {
+                      const color = colorForTeamId(teamId);
+                      return (
+                      <Line
+                        key={teamId}
+                        type="monotone"
+                        dataKey={teamId}
+                        name={teamNames[teamId] || `Team ${teamId}`}
+                        stroke={color}
+                        strokeWidth={2}
+                        dot={false}
+                        isAnimationActive={!isExpanded}
+                        activeDot={hoveredUnratedSeriesKey === String(teamId) ? { r: 4 } : false}
+                        label={
+                          isExpanded && shouldShowEndLabel(String(teamId))
+                            ? makeEndLabel(String(teamId), seriesDisplayName(String(teamId)), color)
+                            : false
+                        }
+                        onMouseEnter={() => setHoveredUnratedSeriesKey(String(teamId))}
+                        onMouseLeave={() => setHoveredUnratedSeriesKey(null)}
+                      />
+                      );
+                    })}
+                     </>
+                   )}
+                 </LineChart>
+               </ResponsiveContainer>
+            );
+        }
         default: return null;
     }
   };
@@ -1464,6 +2021,8 @@ const Instructor: React.FC = () => {
                   ? 'Cumulative Sales Over Time'
                   : expandedChart === 'sequence_quality'
                     ? 'Batch Sequence vs Quality'
+                    : expandedChart === 'unrated_jokes'
+                      ? 'Unrated Jokes Over Time'
                       : 'Expanded'
             }
             maxWidth="max-w-[90vw]"
@@ -1498,15 +2057,22 @@ const Instructor: React.FC = () => {
               </div>
             ) : (
             <div className="h-[75vh] w-full flex flex-col">
-              {(expandedChart === 'sales' || expandedChart === 'sequence_quality') && (
+              {(expandedChart === 'sales' || expandedChart === 'sequence_quality' || expandedChart === 'unrated_jokes') && (
                 <div className="mb-3 flex justify-end items-center gap-4 pr-6">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">Team Filter:</span>
                     <select
-                      value={expandedChart === 'sales' ? salesTeamFilter : sequenceTeamFilter}
+                      value={
+                        expandedChart === 'sales'
+                          ? salesTeamFilter
+                          : expandedChart === 'sequence_quality'
+                            ? sequenceTeamFilter
+                            : unratedTeamFilter
+                      }
                       onChange={(e) => {
                         if (expandedChart === 'sales') setSalesTeamFilter(e.target.value);
-                        else setSequenceTeamFilter(e.target.value);
+                        else if (expandedChart === 'sequence_quality') setSequenceTeamFilter(e.target.value);
+                        else setUnratedTeamFilter(e.target.value);
                       }}
                       className="rounded border border-gray-200 bg-white px-2 py-1 text-xs font-bold text-gray-700 hover:border-gray-300 focus:outline-none"
                     >
@@ -1521,9 +2087,18 @@ const Instructor: React.FC = () => {
                       <button
                         key={k}
                         type="button"
-                        onClick={() => (expandedChart === 'sales' ? setSalesTab(k) : setSequenceTab(k))}
+                        onClick={() => {
+                          if (expandedChart === 'sales') setSalesTab(k);
+                          else if (expandedChart === 'sequence_quality') setSequenceTab(k);
+                          else setUnratedTab(k);
+                        }}
                         className={`px-3 py-1.5 rounded text-sm font-bold ${
-                          (expandedChart === 'sales' ? salesTab : sequenceTab) === k
+                          (expandedChart === 'sales'
+                            ? salesTab
+                            : expandedChart === 'sequence_quality'
+                              ? sequenceTab
+                              : unratedTab
+                          ) === k
                             ? 'bg-gray-900 text-white shadow-sm'
                             : 'text-gray-600 hover:bg-gray-100'
                         }`}
@@ -1695,7 +2270,7 @@ const Instructor: React.FC = () => {
                   value={localBatchSize}
                   onChange={e => setLocalBatchSize(Number(e.target.value))}
                   disabled={!canEditBatchSize}
-                  className={`w-16 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditBatchSize ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`w-20 p-1 border border-gray-300 rounded !text-center appearance-none [-moz-appearance:textfield] bg-white text-black ${!canEditBatchSize ? 'opacity-50 cursor-not-allowed' : ''}`}
                 />
               </div>
               <div className="flex items-center space-x-3">
@@ -1705,7 +2280,7 @@ const Instructor: React.FC = () => {
                   value={localBudget}
                   onChange={e => setLocalBudget(Number(e.target.value))}
                   disabled={!canEditBudget}
-                  className={`w-16 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditBudget ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`w-20 p-1 border border-gray-300 rounded !text-center appearance-none [-moz-appearance:textfield] bg-white text-black ${!canEditBudget ? 'opacity-50 cursor-not-allowed' : ''}`}
                 />
               </div>
               <div className="flex items-center space-x-3">
@@ -1717,7 +2292,7 @@ const Instructor: React.FC = () => {
                   value={localMarketPrice}
                   onChange={e => setLocalMarketPrice(Number(e.target.value))}
                   disabled={!canEditPricing}
-                  className={`w-24 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditPricing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`w-20 p-1 border border-gray-300 rounded !text-center appearance-none [-moz-appearance:textfield] bg-white text-black ${!canEditPricing ? 'opacity-50 cursor-not-allowed' : ''}`}
                 />
               </div>
               <div className="flex items-center space-x-3">
@@ -1729,7 +2304,7 @@ const Instructor: React.FC = () => {
                   value={localCostOfPublishing}
                   onChange={e => setLocalCostOfPublishing(Number(e.target.value))}
                   disabled={!canEditPricing}
-                  className={`w-24 p-1 border border-gray-300 rounded text-center bg-white text-black ${!canEditPricing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`w-20 p-1 border border-gray-300 rounded !text-center appearance-none [-moz-appearance:textfield] bg-white text-black ${!canEditPricing ? 'opacity-50 cursor-not-allowed' : ''}`}
                 />
               </div>
               <Button
@@ -2165,6 +2740,213 @@ const Instructor: React.FC = () => {
             </div>
           </Card>
 
+          {/* Scatter Plots */}
+          <Card title="Scatter Plots" className="xl:col-span-2">
+            <div className="flex flex-wrap items-center gap-4 mb-4">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-600 uppercase">Round</span>
+                <div className="flex items-center rounded-md border border-gray-200 bg-white p-0.5">
+                  {(['R1', 'R2', 'BOTH'] as const).map(k => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setScatterRoundMode(k)}
+                      className={`px-2 py-1 rounded text-xs font-bold ${
+                        scatterRoundMode === k ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'
+                      }`}
+                      title={k === 'BOTH' ? 'Compare both rounds' : (k === 'R1' ? 'Round 1' : 'Round 2')}
+                    >
+                      {k === 'R1' ? 'R1' : k === 'R2' ? 'R2' : 'Both'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-600 uppercase">X-Axis</span>
+                <select
+                  className="border border-slate-200 rounded px-2 py-1 text-sm bg-white"
+                  value={scatterXMetric}
+                  onChange={(e) => setScatterXMetric(e.target.value)}
+                >
+                  {scatterBaseMetrics.map(m => (
+                    <option key={m.key} value={m.key}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-slate-600 uppercase">Y-Axis</span>
+                <div className="inline-flex items-center gap-2">
+                  <select
+                    className="border border-slate-200 rounded px-2 py-1 text-sm bg-white"
+                    value={scatterYMode}
+                    onChange={(e) => setScatterYMode(e.target.value as 'metric' | 'ratio')}
+                  >
+                    <option value="metric">Metric</option>
+                    <option value="ratio">Ratio</option>
+                  </select>
+                  {scatterYMode === 'metric' ? (
+                    <select
+                      className="border border-slate-200 rounded px-2 py-1 text-sm bg-white"
+                      value={scatterYMetric}
+                      onChange={(e) => setScatterYMetric(e.target.value)}
+                    >
+                      {scatterMetrics.map(m => (
+                        <option key={m.key} value={m.key}>{m.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <>
+                      <select
+                        className="border border-slate-200 rounded px-2 py-1 text-sm bg-white"
+                        value={scatterNumerator}
+                        onChange={(e) => setScatterNumerator(e.target.value)}
+                      >
+                        {scatterMetrics.map(m => (
+                          <option key={m.key} value={m.key}>{m.label}</option>
+                        ))}
+                      </select>
+                      <span className="text-sm text-slate-500">/</span>
+                      <select
+                        className="border border-slate-200 rounded px-2 py-1 text-sm bg-white"
+                        value={scatterDenominator}
+                        onChange={(e) => setScatterDenominator(e.target.value)}
+                      >
+                        {scatterMetrics.map(m => (
+                          <option key={m.key} value={m.key}>{m.label}</option>
+                        ))}
+                      </select>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="h-80">
+              <ResponsiveContainer>
+                <ScatterChart margin={{ top: 10, right: 20, left: 44, bottom: 30 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis
+                    type="number"
+                    dataKey="x"
+                    name="x"
+                    label={{
+                      value: metricLabel(scatterXMetric),
+                      angle: 0,
+                      position: 'insideBottom',
+                      offset: -5,
+                    }}
+                  />
+                  <YAxis
+                    type="number"
+                    dataKey="y"
+                    name="y"
+                    width={50}
+                    tickMargin={6}
+                    padding={{ top: 10, bottom: 10 }}
+                    label={{
+                      value: yAxisLabel,
+                      angle: -90,
+                      position: 'insideLeft',
+                      style: { textAnchor: 'middle' },
+                      dx: -20,
+                    }}
+                    domain={isRatioYAxis ? [0, 1] : undefined}
+                    ticks={isRatioYAxis ? [0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1] : undefined}
+                    tickFormatter={(v) => {
+                      if (isRatioYAxis) {
+                        return [0.2, 0.4, 0.6, 0.8].includes(Number(v)) ? v.toFixed(1) : '';
+                      }
+                      // For integer metrics, show integers; for decimals, show 2 places
+                      return isYMetricInteger ? Math.round(v).toString() : Number(v).toFixed(2);
+                    }}
+                  />
+                  <Tooltip
+                    cursor={{ strokeDasharray: '3 3' }}
+                    content={(props: any) => {
+                      const { active, payload } = props;
+                      if (!active || !payload || payload.length === 0) return null;
+                      const p = payload[0]?.payload;
+                      if (!p) return null;
+                      const xFormatted = formatScatterValue(p.xRaw, isXMetricInteger);
+                      const yFormatted = formatScatterValue(p.yRaw, isYMetricInteger);
+                      const roundInfo = scatterRoundMode === 'BOTH' ? ` (${p.round})` : '';
+                      return (
+                        <div className="bg-white border border-gray-200 rounded shadow-lg px-3 py-2 text-sm">
+                          <div className="font-semibold text-gray-900 mb-1">{p.team_name}{roundInfo}</div>
+                          <div className="text-gray-600">
+                            <span className="font-medium">{p.xLabel}:</span> {xFormatted}
+                          </div>
+                          <div className="text-gray-600">
+                            <span className="font-medium">{p.yLabel}:</span> {yFormatted}
+                          </div>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Scatter data={scatterData} shape={renderScatterDot}>
+                    <LabelList content={renderScatterLabel} />
+                  </Scatter>
+                </ScatterChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+
+          {!isChartHidden('unrated_jokes') && (
+            <Card
+              title="Unrated Jokes Over Time"
+              className="xl:col-span-2"
+              action={
+                <div className="flex items-center gap-2">
+                  <select
+                    value={unratedTeamFilter}
+                    onChange={(e) => setUnratedTeamFilter(e.target.value)}
+                    className="rounded border border-gray-200 bg-white px-2 py-1 text-xs font-bold text-gray-700 hover:border-gray-300 focus:outline-none"
+                    title="Filter by Team"
+                  >
+                    <option value="ALL">All Teams</option>
+                    {visibleTeamIds.map(tid => (
+                      <option key={tid} value={tid}>{teamNames[tid] || `Team ${tid}`}</option>
+                    ))}
+                  </select>
+                  <div className="flex items-center rounded-md border border-gray-200 bg-white p-0.5">
+                    {(['R1', 'R2', 'BOTH'] as const).map(k => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setUnratedTab(k)}
+                        className={`px-2 py-1 rounded text-xs font-bold ${
+                          unratedTab === k ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'
+                        }`}
+                        title={k === 'BOTH' ? 'Compare both rounds' : (k === 'R1' ? 'Round 1' : 'Round 2')}
+                      >
+                        {k === 'R1' ? 'R1' : k === 'R2' ? 'R2' : 'Both'}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => setExpandedChart('unrated_jokes')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700"
+                    title="Expand chart"
+                  >
+                    <Maximize2 size={18} />
+                  </button>
+                  <button
+                    onClick={() => hideChart('unrated_jokes')}
+                    className="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-red-600"
+                    title="Hide chart (this session only)"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              }
+            >
+              <div className="h-72 w-full">
+                {renderChart('unrated_jokes')}
+              </div>
+            </Card>
+          )}
+
           {/* Live Market (Instructor view) */}
           <Card title="Live Market" className="xl:col-span-2 mb-8">
             <div className="overflow-x-auto max-h-[420px] overflow-y-auto pb-6">
@@ -2217,6 +2999,7 @@ const Instructor: React.FC = () => {
                   {(() => {
                     const rows = (marketItems ?? []).map(it => ({
                       joke_id: Number((it as any).joke_id),
+                      joke_title: String((it as any).joke_title ?? '').trim(),
                       joke_text: String((it as any).joke_text ?? ''),
                       team_id: Number((it as any).team?.id ?? 0),
                       team_name: String((it as any).team?.name ?? ''),
@@ -2262,6 +3045,9 @@ const Instructor: React.FC = () => {
                       return (
                         <tr key={id} className="hover:bg-gray-50">
                           <td className="px-3 py-2 text-gray-900">
+                            <div className="font-extrabold text-sm text-blue-900 mb-1">
+                              {r.joke_title || 'Untitled Joke'}
+                            </div>
                             <div className={`whitespace-pre-wrap ${isExpanded ? '' : 'line-clamp-3'}`}>
                               {r.joke_text}
                             </div>

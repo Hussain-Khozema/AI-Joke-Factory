@@ -39,6 +39,7 @@ const JokeMaker: React.FC = () => {
   const totalBatches = teamSummary?.batches_created ?? myBatches.length;
   const avgScore = teamSummary ? teamSummary.avg_score_overall.toFixed(1) : 'N/A';
   const mySales = teamSummary?.total_sales ?? 0;
+  const mySoldJokes = Number((teamSummary as any)?.sold_jokes_count ?? mySales ?? 0);
   const myRank = teamSummary?.rank ?? '-';
   const perfTag = performanceTagUi((teamSummary as any)?.performance_label);
   const profitNum = typeof (teamSummary as any)?.profit === 'number' ? Number((teamSummary as any).profit) : null;
@@ -302,7 +303,7 @@ const JokeMaker: React.FC = () => {
             <StatBox label="Current Rank" value={myRank} color="bg-green-100 text-green-900 border-2 border-green-400 shadow-md" />
             <StatBox
               label="Sold / Accepted"
-              value={`${teamSummary?.total_sales ?? 0} / ${teamSummary?.accepted_jokes ?? 0}`}
+              value={`${mySoldJokes} / ${teamSummary?.accepted_jokes ?? 0}`}
               valueClassName="text-blue-900"
               labelClassName="text-blue-900"
             />
