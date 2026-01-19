@@ -42,10 +42,8 @@ const Customer: React.FC = () => {
   
   if (!user) return null;
 
-  // API-driven market (old → new, top → bottom)
-  const marketJokes = [...marketItems]
-    .sort((a, b) => Number(a.joke_id) - Number(b.joke_id))
-    .map(item => ({
+  // API-driven market order (preserve backend ordering)
+  const marketJokes = marketItems.map(item => ({
     id: String(item.joke_id),
       title: String((item as any).joke_title ?? '').trim(),
     content: item.joke_text,
@@ -55,7 +53,7 @@ const Customer: React.FC = () => {
     acceptedCount: Number((item.team as any)?.accepted_jokes ?? 0),
     batchId: String(item.joke_id), // placeholder to preserve UI (API does not include batch_id)
     isBoughtByMe: item.is_bought_by_me,
-    }));
+  }));
 
   const purchasedSet = new Set(user.purchasedJokes);
   const marketPrice = Number.isFinite(config.marketPrice) && config.marketPrice > 0 ? config.marketPrice : 1;
