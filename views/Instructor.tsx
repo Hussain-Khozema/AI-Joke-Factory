@@ -2855,6 +2855,7 @@ const Instructor: React.FC = () => {
                     width={50}
                     tickMargin={6}
                     padding={{ top: 10, bottom: 10 }}
+                    allowDecimals={!isYMetricInteger}
                     label={{
                       value: yAxisLabel,
                       angle: -90,
@@ -2869,7 +2870,10 @@ const Instructor: React.FC = () => {
                         return [0.2, 0.4, 0.6, 0.8].includes(Number(v)) ? v.toFixed(1) : '';
                       }
                       // For integer metrics, show integers; for decimals, show 2 places
-                      return isYMetricInteger ? Math.round(v).toString() : Number(v).toFixed(2);
+                      if (isYMetricInteger) {
+                        return Number.isInteger(v) ? String(v) : '';
+                      }
+                      return Number(v).toFixed(2);
                     }}
                   />
                   <Tooltip
