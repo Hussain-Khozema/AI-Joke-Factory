@@ -422,7 +422,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
     showTeamPopup: false,
     startTime: null,
     elapsedTime: 0,
-    customerBudget: 20,
+    customerBudget: 10,
     round1BatchSize: 5,
     round2BatchLimit: DEFAULT_ROUND2_BATCH_LIMIT,
     marketPrice: DEFAULT_MARKET_PRICE,
@@ -551,9 +551,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
               setConfig(prev => {
                 const baseRound = apiRoundNumber ?? prev.round ?? 1;
                 const nextRound = round1Status === 'ENDED' ? 2 : baseRound;
+                const nextStartTime =
+                  isActive
+                    ? (selectedRound?.started_at ? Date.parse(selectedRound.started_at) : prev.startTime ?? Date.now())
+                    : null;
                 const elapsed =
-                  isActive && selectedRound?.started_at
-                    ? Math.max(0, Math.floor((nowMs() - Date.parse(selectedRound.started_at)) / 1000))
+                  isActive && nextStartTime
+                    ? Math.max(0, Math.floor((nowMs() - nextStartTime) / 1000))
                     : prev.elapsedTime;
 
                 // Only trust backend-provided config numbers once the round has started (or ended).
@@ -585,7 +589,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   round: nextRound,
                   isActive,
                   showTeamPopup: popupActive,
-                  startTime: isActive && selectedRound?.started_at ? Date.parse(selectedRound.started_at) : null,
+                  startTime: nextStartTime,
                   elapsedTime: elapsed,
                   customerBudget: nextCustomerBudget,
                   round1BatchSize: nextRound1BatchSize,
@@ -883,9 +887,13 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const baseRound = apiRoundNumber ?? prev.round ?? 1;
           // Auto-advance UI: after Round 1 is ENDED, default to Round 2 even before it becomes ACTIVE.
           const nextRound = round1Status === 'ENDED' ? 2 : baseRound;
+          const nextStartTime =
+            isActive
+              ? (selectedRound?.started_at ? Date.parse(selectedRound.started_at) : prev.startTime ?? Date.now())
+              : null;
           const elapsed =
-            isActive && selectedRound?.started_at
-              ? Math.max(0, Math.floor((nowMs() - Date.parse(selectedRound.started_at)) / 1000))
+            isActive && nextStartTime
+              ? Math.max(0, Math.floor((nowMs() - nextStartTime) / 1000))
               : prev.elapsedTime;
 
           // Only trust backend-provided config numbers once the round has started (or ended).
@@ -917,7 +925,7 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
             round: nextRound,
             isActive,
             showTeamPopup: popupActive,
-            startTime: isActive && selectedRound?.started_at ? Date.parse(selectedRound.started_at) : null,
+            startTime: nextStartTime,
             elapsedTime: elapsed,
             customerBudget: nextCustomerBudget,
             round1BatchSize: nextRound1BatchSize,
@@ -1354,14 +1362,21 @@ export const GameProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Timer Logic
   useEffect(() => {
-    let timer: ReturnType<typeof setInterval>;
+    let timer: ReturnType<typeof setInterval> | null = null;
     if (config.isActive) {
       timer = setInterval(() => {
-        setConfig(prev => ({ ...prev, elapsedTime: prev.elapsedTime + 1 }));
+        setConfig(prev => {
+          if (!prev.startTime) return prev;
+          const nextElapsed = Math.max(0, Math.floor((nowMs() - prev.startTime) / 1000));
+          if (nextElapsed === prev.elapsedTime) return prev;
+          return { ...prev, elapsedTime: nextElapsed };
+        });
       }, 1000);
     }
-    return () => clearInterval(timer);
-  }, [config.isActive]);
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [config.isActive, config.startTime]);
 
   const login = async (name: string, _role: Role) => {
     const display_name = name.trim();
